@@ -54,9 +54,11 @@ LENA groups work into **categories** (architecture, implementation, debugging, a
 
 ---
 
-## Adding custom agents
+## Adding custom agents for LENA to choose from
 
-Same idea in both products: a markdown file, YAML frontmatter, body = specialist prompt. The **stable id** is usually the `name` field. What changes is the folder, precedence rules, and the exact parameter name on the delegate / task tool (Cursor often shows `subagent_type`; Claude Code matches on the agent `name` ... check what your build lists).
+LENA works well with VoltAgents subagents and I highly recommend pairing the two tools together. 
+
+Repo: [VoltAgent SubAgent Collection](https://github.com/VoltAgent/awesome-claude-code-subagents).
 
 ### Cursor (`subagent_type` + `.cursor/agents`)
 
