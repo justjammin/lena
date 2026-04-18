@@ -9,15 +9,20 @@ Complete guide to publishing LENA so others can install via `npx lena-ai` or `cl
 ```
 lena/
 ├── README.md
+├── CLAUDE.md                 # maintainer / repo context for Claude in this project
 ├── SHIPPING.md
 ├── LICENSE
 ├── package.json              # npm package — enables npx install
 ├── install.js                # install script run by npx
+├── hooks/
+│   ├── lena-activate.js      # SessionStart: injects SKILL.md into each session
+│   ├── README.md
+│   └── package.json          # CommonJS marker for node
 ├── skills/
 │   └── lena/
 │       └── SKILL.md          # the actual skill loaded by Claude Code
 └── .claude-plugin/
-    └── plugin.json           # Claude Code plugin marketplace config
+    └── plugin.json           # skills + SessionStart hooks
 ```
 
 ---
@@ -116,7 +121,7 @@ claude plugin add justjammin/lena
 
 ### What plugin.json does
 
-Claude Code reads `.claude-plugin/plugin.json` to discover skills, hooks, and metadata. The `"skills": "./skills/"` field tells Claude Code where to find skill files.
+Claude Code reads `.claude-plugin/plugin.json` to discover skills, hooks, and metadata. The `"skills": "./skills/"` field tells Claude Code where to find skill files. The `"hooks"."SessionStart"` entry runs `hooks/lena-activate.js` so each new session injects `skills/lena/SKILL.md` (see `hooks/README.md`).
 
 ### Submitting to the marketplace
 

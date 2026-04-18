@@ -126,6 +126,8 @@ Docs: [Subagents (Claude Code)](https://docs.claude.com/en/docs/claude-code/suba
 claude plugin add justjammin/lena
 ```
 
+With the **plugin**, Claude Code runs a **SessionStart** hook that loads the LENA skill into hidden context on **every new session**, so routing rules apply from the first message until you say **`stop lena`**, **`exit lena`**, or **`lena off`**. You can still type **`/lena`** for the explicit **LENA active** line.
+
 ### npx
 
 ```bash
@@ -140,17 +142,21 @@ curl -o ~/.claude/skills/lena/SKILL.md \
   https://raw.githubusercontent.com/justjammin/lena/main/skills/lena/SKILL.md
 ```
 
+Manual install is **skill only** (no SessionStart hook). Use **`/lena`** each thread if you want LENA behavior.
+
 ---
 
 ## Usage
 
-Type `/lena` in your prompt window:
+**Plugin:** LENA is already primed when the session opens; **`/lena`** is optional (good for the ritual line).
+
+**Skill-only:** type **`/lena`** in your prompt:
 
 ```
 /lena
 ```
 
-On the **first** `/lena` in a thread, LENA answers with something like: **LENA active. What are we building?** After that, same thread keeps LENA routing on every message! Say **`stop lena`**, **`exit lena`**, or **`lena off`** when you want normal assistant mode again. New chat → `/lena` again.
+On the **first** `/lena` in a thread, LENA answers with something like: **LENA active. What are we building?** After that, same thread keeps LENA routing on every message until **`stop lena`**, **`exit lena`**, or **`lena off`**. With the plugin, the next **new session** primes LENA again via the hook; with skill-only, use **`/lena`** again in the new chat.
 
 ### Two quick examples
 

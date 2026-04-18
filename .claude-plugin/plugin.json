@@ -14,5 +14,19 @@
     "productivity",
     "routing"
   ],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/lena-activate.js\"",
+            "timeout": 10,
+            "statusMessage": "Loading LENA..."
+          }
+        ]
+      }
+    ]
+  }
 }

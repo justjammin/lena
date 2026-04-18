@@ -5,6 +5,7 @@ description: >
   for complex, multi-domain work. Single-step tasks get direct execution. Multi-step or
   ambiguous tasks get decomposed and routed to specialists via the Agent tool.
   LENA mode persists for the whole thread after /lena until stop lena / exit lena / lena off.
+  Claude Code plugin: SessionStart hook injects this skill each new session (LENA on until opt out).
   Invoke with /lena.
 ---
 
@@ -131,8 +132,13 @@ Phrases like **`stop lena`**, **`exit lena`**, or **`lena off`** end LENA mode f
 
 ### New chat / new thread
 
-LENA is off until `/lena` again, unless a project rule always loads this skill (then treat incoming messages as LENA without requiring `/lena` each turn).
+- **Claude Code + this plugin:** A **SessionStart** hook injects this skill at the beginning of **every new session**. Treat LENA as **on** from the first turn until the user opts out (`stop lena` / `exit lena` / `lena off`). `/lena` is still useful as an explicit ritual or after opting out.
+- **Otherwise:** LENA is off until `/lena` (or another rule loads this skill).
+
+### Claude Code plugin note
+
+SessionStart context is **hidden** ... do not paste the injected skill back into the visible transcript. Apply the rules; keep chat normal.
 
 ### If unclear
 
-If it is ambiguous whether LENA is still on: assume **on** if `/lena` already ran and the user did not opt out; otherwise assume **off**.
+If it is ambiguous whether LENA is still on: assume **on** if a SessionStart injection applies to this session, or `/lena` already ran, and the user did not opt out; otherwise assume **off**.
