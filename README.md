@@ -1,4 +1,4 @@
-# LENA: AI Orchestrator for Claude Code
+# LENA: AI Orchestrator
 
 You know that moment when you ask your AI for something small and it suddenly wants a committee? Or you ask for something huge and one tired generalist tries to do it all? That's the friction this skill is for.
 
