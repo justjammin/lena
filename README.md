@@ -150,7 +150,7 @@ Type `/lena` in your prompt window:
 /lena
 ```
 
-On the **first** `/lena` in a thread, LENA answers with something like: **LENA active. What are we building?** After that, same thread keeps LENA routing on every message ... same persistence idea as `/caveman`. Say **`stop lena`**, **`exit lena`**, or **`lena off`** when you want normal assistant mode again. New chat → `/lena` again.
+On the **first** `/lena` in a thread, LENA answers with something like: **LENA active. What are we building?** After that, same thread keeps LENA routing on every message! Say **`stop lena`**, **`exit lena`**, or **`lena off`** when you want normal assistant mode again. New chat → `/lena` again.
 
 ### Two quick examples
 
@@ -192,10 +192,30 @@ On the **first** `/lena` in a thread, LENA answers with something like: **LENA a
 
 | Environment | Install |
 |-------------|---------|
-| Claude Code | `claude plugin add justjammin/lena` |
-| Anything with Node | `npx lena-ai` |
+| Claude Code | `claude plugin add justjammin/lena && claude plugin install lena` |
+| **Codex** | Clone repo → `/plugins` → Search "lena" → Install |
+| **Gemini CLI** | `gemini extensions install https://github.com/justjammin/lena` |
+| **Cursor** | `npx skills add justjammin/lena -a cursor` |
+| **Windsurf** | `npx skills add justjammin/lena -a windsurf` |
+| **Copilot** | `npx skills add justjammin/lena -a github-copilot` |
+| **Cline** | `npx skills add justjammin/lena -a cline` |
+| **Any other** | `npx skills add justjammin/lena` |
 
 ---
+
+
+<summary><strong>Any other agent (opencode, Roo, Amp, Goose, Kiro, and 40+ more)</strong></summary>
+
+[npx skills](https://github.com/vercel-labs/skills) supports 40+ agents:
+
+```bash
+npx skills add justjammin/lena           # auto-detect agent
+npx skills add justjammin/lena -a amp
+npx skills add justjammin/lena -a augment
+npx skills add justjammin/lena -a goose
+npx skills add justjammin/lena -a kiro-cli
+npx skills add justjammin/lena -a roo
+# ... and many more
 
 ## License
 
