@@ -118,16 +118,6 @@ Docs: [Subagents (Claude Code)](https://docs.claude.com/en/docs/claude-code/suba
 
 ---
 
-## Can a skill auto-categorize agents?
-
-**Not by itself.** A skill is instructions ... it doesn't watch folders or run on a schedule.
-
-**What *is* doable:** LENA's skill tells the model to **optionally read** agent markdown under `.cursor/agents/`, `~/.cursor/agents/`, `.claude/agents/`, and `~/.claude/agents/`, map each file's `name` + `description` onto the category table, and only delegate ids the current tool/session actually allows. That's "auto categorize" at **orchestration time** inside the chat.
-
-If you want categorization **outside** a LENA turn (e.g. on every save), you'd use something else ... **hooks** (Cursor or Claude Code where supported), a CI script, or a small local tool ... not the skill file alone.
-
----
-
 ## Install
 
 ### Claude Code (recommended)
@@ -160,7 +150,7 @@ Type `/lena` in your prompt window:
 /lena
 ```
 
-LENA answers with something like: **LENA active. What are we building?** Then you describe the task and LENA routes it.
+On the **first** `/lena` in a thread, LENA answers with something like: **LENA active. What are we building?** After that, same thread keeps LENA routing on every message ... same persistence idea as `/caveman`. Say **`stop lena`**, **`exit lena`**, or **`lena off`** when you want normal assistant mode again. New chat → `/lena` again.
 
 ### Two quick examples
 
