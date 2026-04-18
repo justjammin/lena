@@ -1,0 +1,18 @@
+{
+  "name": "lena",
+  "description": "AI orchestrator for Claude Code. Routes tasks to specialists or coordinates multiple agents. Minimal complexity, maximum correctness.",
+  "author": {
+    "name": "Jamin Echols",
+    "url": "https://github.com/justjammin"
+  },
+  "homepage": "https://github.com/justjammin/lena",
+  "repository": "https://github.com/justjammin/lena",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "agents",
+    "productivity",
+    "routing"
+  ],
+  "skills": "./skills/"
+}

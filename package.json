@@ -1,0 +1,35 @@
+{
+  "name": "lena-ai",
+  "version": "1.0.0",
+  "description": "AI orchestrator for Claude Code. Routes tasks to specialists or coordinates multi-agent workflows.",
+  "bin": {
+    "lena-ai": "./install.js"
+  },
+  "keywords": [
+    "ai",
+    "orchestrator",
+    "claude",
+    "claude-code",
+    "agents",
+    "skill",
+    "productivity"
+  ],
+  "author": {
+    "name": "Jamin Echols",
+    "url": "https://github.com/jaminechols"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jaminechols/lena"
+  },
+  "homepage": "https://github.com/jaminechols/lena",
+  "files": [
+    "install.js",
+    "skills/",
+    ".claude-plugin/"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}
