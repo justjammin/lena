@@ -200,7 +200,7 @@ On the **first** `/lena` in a thread, LENA answers with something like: **LENA a
 
 | Environment | Install |
 |-------------|---------|
-| Claude Code | `claude plugin add justjammin/lena && claude plugin install lena` |
+| Claude Code | `claude plugin add justjammin/lena && claude plugin install lena@lena` |
 | **Codex** | Clone repo → `/plugins` → Search "lena" → Install |
 | **Gemini CLI** | `gemini extensions install https://github.com/justjammin/lena` |
 | **Cursor** | `npx skills add justjammin/lena -a cursor` |
