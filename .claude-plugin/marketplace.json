@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "lena",
+  "description": "AI orchestrator tooling",
+  "owner": {
+    "name": "Jamin Echols",
+    "url": "https://github.com/justjammin"
+  },
+  "plugins": [
+    {
+      "name": "lena",
+      "description": "Logical Execution & Navigation Assistant",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
