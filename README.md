@@ -224,6 +224,7 @@ npx skills add justjammin/lena -a goose
 npx skills add justjammin/lena -a kiro-cli
 npx skills add justjammin/lena -a roo
 # ... and many more
+```
 
 ## License
 
