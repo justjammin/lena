@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.1.1] — 2026-04-20
+
+### What's new
+
+**LENA's hat now shows in the right spot**
+
 ## [v1.1.0] — 2026-04-20
 
 ### What's new
