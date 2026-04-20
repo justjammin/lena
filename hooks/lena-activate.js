@@ -9,9 +9,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const pluginRoot = path.join(__dirname, '..');
 const skillPath = path.join(pluginRoot, 'skills', 'lena', 'SKILL.md');
+
+const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+try { fs.writeFileSync(path.join(configDir, '.lena-active'), 'active', { mode: 0o600 }); } catch (_) {}
+try { fs.writeFileSync(path.join(configDir, '.lena-hat'), 'lena', { mode: 0o600 }); } catch (_) {}
 
 const header =
   '[LENA plugin — SessionStart] Orchestrator skill injected for this session. ' +

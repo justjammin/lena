@@ -10,6 +10,9 @@ const CLAUDE_SKILLS_DIR = path.join(CLAUDE_DIR, 'skills', 'lena');
 const SKILL_DEST = path.join(CLAUDE_SKILLS_DIR, 'SKILL.md');
 const SETTINGS_PATH = path.join(CLAUDE_DIR, 'settings.json');
 const HOOK_COMMAND = `node "${path.join(__dirname, 'hooks', 'lena-activate.js')}"`;
+const HOOKS_DIR = path.join(CLAUDE_DIR, 'hooks');
+const STATUSLINE_SRC = path.join(__dirname, 'hooks', 'lena-statusline.sh');
+const STATUSLINE_DEST = path.join(HOOKS_DIR, 'lena-statusline.sh');
 
 function install() {
   if (!fs.existsSync(CLAUDE_DIR)) {
@@ -22,6 +25,13 @@ function install() {
     fs.mkdirSync(CLAUDE_SKILLS_DIR, { recursive: true });
   }
   fs.copyFileSync(SKILL_SRC, SKILL_DEST);
+
+  // Copy statusline script
+  if (!fs.existsSync(HOOKS_DIR)) {
+    fs.mkdirSync(HOOKS_DIR, { recursive: true });
+  }
+  fs.copyFileSync(STATUSLINE_SRC, STATUSLINE_DEST);
+  try { fs.chmodSync(STATUSLINE_DEST, 0o755); } catch (_) {}
 
   // Register SessionStart hook
   let settings = {};
@@ -45,11 +55,28 @@ function install() {
         statusMessage: 'Loading LENA...'
       }]
     });
-    fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
     console.log('  Hook:  SessionStart → hooks/lena-activate.js');
   } else {
     console.log('  Hook:  already registered (skipped)');
   }
+
+  // Register statusLine — set if empty, chain if already configured
+  const statusLineCmd = `bash "${STATUSLINE_DEST}"`;
+  if (!settings.statusLine) {
+    settings.statusLine = { type: 'command', command: statusLineCmd };
+    console.log('  Status: statusLine → hooks/lena-statusline.sh');
+  } else if (settings.statusLine.command && !settings.statusLine.command.includes('lena-statusline')) {
+    const existing = settings.statusLine.command;
+    settings.statusLine = {
+      type: 'command',
+      command: `(${existing}) 2>/dev/null; printf ' '; ${statusLineCmd}`
+    };
+    console.log('  Status: [LENA] badge chained to existing statusLine');
+  } else {
+    console.log('  Status: [LENA] badge already in statusLine (skipped)');
+  }
+
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
 
   console.log('');
   console.log('LENA installed.');

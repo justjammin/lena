@@ -28,7 +28,7 @@ bash hooks/install.sh --force
 
 - Runs at the start of each Claude Code session.
 - Reads `skills/lena/SKILL.md`, strips YAML frontmatter, prints the body to stdout.
-- That output is injected as **hidden** session context (same pattern as the caveman plugin).
+- That output is injected as **hidden** session context.
 - Users stay primed as LENA until they say `stop lena`, `exit lena`, or `lena off`; the next session runs the hook again.
 
 ## Paths

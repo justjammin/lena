@@ -40,9 +40,17 @@ If ANY signal points Orchestrate → proceed to Step 2.
 
 ## Step 2A: Direct Execution
 
-Execute the task yourself. No agent spawning. No simulation of multiple agents.
+Pick the single best-fit agent role from the Categories table that covers this task's domain. Embody that specialist's depth and perspective — you ARE that agent for this response.
 
-Examples: write a function, fix a known bug, generate tests, explain code, answer a question.
+Role selection examples: server code → `backend-developer` · bug hunt → `debugger` · quality check → `code-reviewer` · schema work → `database-optimizer` · analysis → `data-scientist` · system design → `architect-reviewer`
+
+**Hat update:** If your response requires any tool calls, write the adopted role name to the hat file as your very first tool call so the statusline reflects your current hat:
+```
+bash -c 'echo "role-name" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
+```
+Pure-text responses (no tools needed): skip — statusline keeps the last known hat.
+
+No agent spawning. No simulation of multiple agents.
 
 Output: the answer only. No preamble.
 
