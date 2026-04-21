@@ -54,6 +54,11 @@ No agent spawning. No simulation of multiple agents.
 
 Output: the answer only. No preamble.
 
+**Hat reset:** After delivering the answer, reset hat to resting state as your last tool call:
+```
+bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
+```
+
 ---
 
 ## Step 2B: Orchestrated Execution
