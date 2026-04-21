@@ -1,5 +1,11 @@
 # Changelog
 
+## [v1.1.2] — 2026-04-21
+
+### What's new
+
+**LENA learned how to take off her hat**
+
 ## [v1.1.1] — 2026-04-20
 
 ### What's new
