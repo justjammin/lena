@@ -46,7 +46,7 @@ Role selection examples: server code → `backend-developer` · bug hunt → `de
 
 **Hat update:** If your response requires any tool calls, write the adopted role name to the hat file as your very first tool call so the statusline reflects your current hat:
 ```
-bash -c 'echo "role-name" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
+ctx_shell('echo "role-name" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"')
 ```
 Pure-text responses (no tools needed): skip — statusline keeps the last known hat.
 
