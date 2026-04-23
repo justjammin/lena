@@ -44,15 +44,21 @@ Pick the single best-fit agent role from the Categories table that covers this t
 
 Role selection examples: server code → `backend-developer` · bug hunt → `debugger` · quality check → `code-reviewer` · schema work → `database-optimizer` · analysis → `data-scientist` · system design → `architect-reviewer`
 
+**Hat announcement:** Always output a single prefix line before your answer:
+```
+→ role-name
+```
+Example: `→ debugger` or `→ backend-developer`. Skip only for meta/conversational responses with no clear specialist role.
+
 **Hat update:** If your response requires any tool calls, write the adopted role name to the hat file as your very first tool call so the statusline reflects your current hat:
 ```
 ctx_shell('echo "role-name" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"')
 ```
-Pure-text responses (no tools needed): skip — statusline keeps the last known hat.
+Pure-text responses (no tools needed): skip the file write — statusline keeps the last known hat.
 
 No agent spawning. No simulation of multiple agents.
 
-Output: the answer only. No preamble.
+Output: hat announcement line, then the answer. No other preamble.
 
 **Hat reset:** After delivering the answer, reset hat to resting state as your last tool call:
 ```
