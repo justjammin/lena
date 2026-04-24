@@ -32,6 +32,8 @@ Bigger work gets decomposed on purpose. Each chunk goes to whoever's built for t
 
 **Examples:** auth end-to-end, a real refactor, chasing a production failure across layers.
 
+Steps with hard dependencies run in order. Steps with no inter-dependencies (e.g. Testing + Documentation after Implementation, or Security + Code Review on the same artifact) are dispatched concurrently when possible.
+
 ---
 
 ## Who LENA can call
@@ -117,6 +119,78 @@ Common optional keys include `tools`, `disallowedTools`, `model`, `permissionMod
 **After you add or edit a file:** restart the session or run **`/agents`** so Claude Code reloads the list.
 
 Docs: [Subagents (Claude Code)](https://docs.claude.com/en/docs/claude-code/subagents).
+
+---
+
+## Tool infrastructure
+
+LENA includes four infrastructure layers: task tracking, long-term memory, context management, and output compression. Each has a fallback. If a tool is unavailable, LENA uses the fallback and continues.
+
+### Beads — Task tracking
+
+Beads tracks sub-agent steps during orchestrated execution. When a task splits into 2+ steps, each step is registered in Beads with a title, assigned role, status (`pending` → `in-progress` → `done`), and dependencies. The parent task closes when all steps close.
+
+**Fallback:** numbered checklist in the response, updated as steps complete.
+
+---
+
+### Graphify — Long-term memory
+
+Graphify is a persistent knowledge graph that stores context across sessions. At session start, LENA queries it for prior context on the task domain. During work, LENA writes key decisions and outputs. At session end, LENA writes a summary node.
+
+**Node shape:**
+
+```json
+{
+  "task": "string",
+  "domain": "string",
+  "outcome": "string",
+  "agents_used": ["string"],
+  "timestamp": "ISO8601"
+}
+```
+
+**Fallback:** one question for prior context at session start; `## Session Memory` block for in-session decisions; 3–5 bullet summary at session end offered for manual save.
+
+---
+
+### Lean CTX — Context management
+
+Lean CTX compresses the active context before each sub-agent call and injects a `## Context` block into the agent prompt. It runs on every Step 2B execution and when context window pressure increases.
+
+**Fallback:** manual context summary (task goal, decisions so far, current step, blockers) injected into each sub-agent prompt. Cap at 500 tokens per call.
+
+---
+
+### Caveman — Output compression
+
+Caveman compresses human-facing output at a configurable intensity level. When active, orchestration output (decomposition plans, step summaries, synthesis) is compressed at the selected level.
+
+| Level | Behavior |
+|-------|----------|
+| `lite` | No filler or hedging. Articles and full sentences kept. Tight but professional |
+| `full` | Drop articles, fragments OK, short synonyms. Classic caveman |
+| `ultra` | Abbreviate (DB / auth / config / req / res / fn / impl), strip conjunctions, arrows for causality (X → Y), one word when one word is enough |
+| `wenyan-lite` | Semi-classical Chinese. Drop filler/hedging, keep grammar structure |
+| `wenyan-full` | Maximum classical terseness. 文言文. 80–90% character reduction |
+| `wenyan-ultra` | Extreme abbreviation with classical Chinese feel. Maximum compression |
+
+Not compressed: code blocks, error messages, security warnings, destructive action confirmations, multi-step sequences where fragment order matters.
+
+**Fallback:** terse prose — drop filler, hedging, and pleasantries.
+
+---
+
+### Tool availability check
+
+At the start of any orchestrated execution, LENA checks which tools are available:
+
+| Tool | Available | Unavailable |
+|------|-----------|-------------|
+| Beads | Track all task state | Inline checklist |
+| Graphify | Query + write graph nodes | Session scratchpad + end summary |
+| Lean CTX | Compress per sub-agent | Manual 500-token context block |
+| Caveman | Compress all human-facing output | Terse prose, drop filler manually |
 
 ---
 

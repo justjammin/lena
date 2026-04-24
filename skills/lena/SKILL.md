@@ -65,6 +65,8 @@ Output: hat announcement line, then the answer. No other preamble.
 bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
 ```
 
+> **Parallel execution note:** If steps run concurrently, skip hat file writes for those steps entirely — concurrent writes will corrupt the hat state. Hat updates resume on the next sequential step.
+
 ---
 
 ## Step 2B: Orchestrated Execution
@@ -74,7 +76,9 @@ bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
    - **Optional — discover custom agents on disk:** If any of these exist, read YAML frontmatter (`name`, `description`) from each `*.md`: `{workspace}/.cursor/agents/`, `~/.cursor/agents/`, `{workspace}/.claude/agents/`, `~/.claude/agents/` (and plugin `agents/` if visible). Treat `name` as the delegate id **if** it appears in the tool's allowed list. Infer **which category** each custom agent fits (Architecture, Implementation, …) from `description` and, only if needed, the opening lines of the body. Merge with built-in defaults below; prefer explicit table mapping when the same name exists in both.
    - Prefer the agent types listed under each category; if a type is missing in this environment, use the closest available type or fold that work into direct execution, and say so briefly.
 3. State the decomposition: ordered steps, category per step, concrete delegate id per step (`subagent_type` / agent `name` as required by the host).
-4. Execute each step in order using the Agent tool. Pass context forward explicitly in each prompt.
+4. Execute each step using the Agent tool. Pass context forward explicitly in each prompt.
+   - Steps with hard dependencies execute in order.
+   - Steps with no inter-dependencies (e.g. Testing + Documentation after Implementation, or Security + Code Review on the same artifact) may be dispatched concurrently. State when doing this.
 5. Synthesize into one cohesive final result.
 
 Typical order when multiple categories apply: **Architecture** before **Implementation**; **Debugging** before a fix in **Implementation**; **Testing** / **Code Review** / **Security** / **Documentation** after the core change unless the task is review-only or doc-only.
@@ -99,6 +103,157 @@ Use this table to pick *who* for *what*. One category can map to several agent t
 **Domain extra (when the task is ML/AI-shaped):** `llm-architect` (pipelines, RAG, tuning, serving concerns). Treat as its own lane alongside **Implementation** / **Architecture** as needed.
 
 **Routing discipline:** Do not spawn agents for categories the user did not need. Combine steps when one agent can own two adjacent categories without losing quality (e.g. small feature: **Implementation** + **Testing** only).
+
+---
+
+## Tool Infrastructure
+
+LENA uses three infrastructure tools for memory and task management. Each has a defined fallback for when the tool is unavailable. Always attempt the primary tool first. On failure or absence, execute the fallback silently — do not surface infrastructure errors to the user unless the fallback also fails.
+
+---
+
+### Beads — Task Delegation & Management
+**Layer:** Tool / Orchestration
+
+**When to invoke:**
+- Any Step 2B orchestrated execution with 2+ sub-agent steps
+- Any task that produces delegatable work units (tickets, todos, sub-tasks)
+- When the user asks to track, assign, or review work progress
+
+**Initialization:**
+Before first use in a session, verify Beads is ready:
+```
+bd ready
+```
+If the skill is available but `bd ready` fails (Beads not initialized in the project), run:
+```
+bd init
+```
+This adds Beads to the project. Run `bd ready` again to confirm before proceeding. If `bd init` also fails, fall back to the inline checklist below.
+
+**Usage pattern:**
+1. After decomposing in Step 2B, push each step to Beads as a task with: title, assigned agent role, status `pending`, dependencies noted.
+2. Update task status as each step completes (`in-progress` → `done`).
+3. On synthesis, mark the parent task `done`.
+
+**Fallback (Beads unavailable):**
+- Maintain task state inline as a numbered checklist in the active response.
+- Update checklist items as steps complete.
+- Persist final checklist in the thread for reference.
+
+---
+
+### Graphify — Long-Term Memory
+**Layer:** Context & Memory (persistent, cross-session)
+
+**When to invoke:**
+- Session start: query Graphify for relevant prior context on the current task domain before beginning work.
+- On significant decisions: write architectural choices, resolved ambiguities, and key outputs to the graph.
+- When the user references prior work ("like last time", "same pattern as", "you remember when").
+- On session end or task completion: persist a summary node with task title, outcome, and key facts.
+
+**Node schema (write this shape):**
+```json
+{
+  "task": "string",
+  "domain": "string",
+  "outcome": "string",
+  "agents_used": ["string"],
+  "timestamp": "ISO8601"
+}
+```
+
+**Fallback (Graphify unavailable):**
+- At session start: ask the user for any relevant prior context in one targeted question.
+- During session: hold key decisions in a `## Session Memory` scratchpad block at the top of long responses.
+- At session end: summarize the session in 3–5 bullet points and offer to save to a file or paste for the user to store manually.
+
+---
+
+### Lean CTX — Short-Term Context Management
+**Layer:** Context & Memory (in-session, window management)
+
+**When to invoke:**
+- Automatically, on every orchestrated execution (Step 2B): pass the current compressed context to each sub-agent prompt rather than raw conversation history.
+- When context window pressure is detected (long thread, many tool calls): compress and summarize prior turns before the next LLM call.
+- When switching agent roles mid-task: trim irrelevant prior context, retain only what the next role needs.
+
+**Usage pattern:**
+- Before each sub-agent delegation, call Lean CTX to produce a compressed context block.
+- Inject that block at the top of the agent prompt under a `## Context` header.
+- After each step completes, update the compressed context with the step's output.
+
+**Fallback (Lean CTX unavailable):**
+- Manually extract a context summary: task goal, decisions made so far, current step, and any blocking facts.
+- Inject this summary as a `## Context` block in each sub-agent prompt by hand.
+- Cap injected context at 500 tokens per sub-agent call to avoid window bloat.
+
+---
+
+### Caveman — Token-Efficient Communication
+**Layer:** Serving / Output Compression
+
+**When to invoke:**
+- User requests brevity, token efficiency, or explicitly invokes `/caveman`
+- Long orchestrated sessions where response verbosity compounds context pressure
+- When Lean CTX is under load — compressing output reduces downstream window cost
+- Any turn where caveman is already active: persist through all LENA responses until opt-out
+
+**Default level:** `ultra` unless user specifies `lite`, `ultra`, or `wenyan-*`
+
+**Intensity levels:**
+
+| Level | Behavior |
+|-------|----------|
+| `lite` | No filler/hedging. Keep articles + full sentences. Tight but professional |
+| `full` | Drop articles, fragments OK, short synonyms. Classic caveman |
+| `ultra` | Abbreviate (DB/auth/config/req/res/fn/impl), strip conjunctions, arrows for causality (X → Y), one word when one word enough |
+| `wenyan-lite` | Semi-classical Chinese. Drop filler/hedging, keep grammar structure |
+| `wenyan-full` | Maximum classical terseness. 文言文. 80-90% character reduction |
+| `wenyan-ultra` | Extreme abbreviation with classical Chinese feel. Maximum compression |
+
+**Usage pattern:**
+- LENA orchestration output (decomposition plans, step summaries, synthesis) all compressed at active level
+- Agent role labels, step headers, and tool call annotations still rendered — structure preserved
+- Beads task status updates: compress human-facing summaries, not task titles or IDs
+- Graphify node writes: full schema preserved — only human-facing summaries compressed
+- Lean CTX pairing: `ultra` pairs well with Lean CTX — compressed output = smaller context injection per sub-agent
+
+**Never compress:**
+- Code blocks
+- Error messages (quoted exact)
+- Security warnings
+- Destructive action confirmations
+- Multi-step sequences where fragment order risks misread
+
+**Auto-clarity rule:** Drop caveman for the above cases. Resume immediately after.
+
+**Persistence rule:** If caveman is active when `/lena` is invoked, caveman stays active for all LENA responses. LENA does not reset communication mode. Off only on `stop caveman` / `normal mode`.
+
+**No-override rule:** If caveman mode and level were set by the caveman skill, LENA must not change them. Inherit the active level as-is. LENA only sets caveman state when no caveman skill is present and the user explicitly requests compression.
+
+**Fallback (Caveman unavailable):**
+- Default to terse professional prose manually — drop filler, hedging, and pleasantries
+- Follow `ultra` intensity rules without the formal mode active
+
+---
+
+### Tool Availability Check
+
+At the start of any orchestrated execution, silently verify which tools are available:
+
+```
+available_tools = check([beads, graphify, lean_ctx, caveman])
+```
+
+| Tool | Available | Unavailable |
+|------|-----------|-------------|
+| Beads | Use for all task state | Inline checklist |
+| Graphify | Query + write graph nodes | Session scratchpad + end summary |
+| Lean CTX | Auto-compress per sub-agent | Manual 500-token context block |
+| Caveman | Compress all human-facing output | Terse prose, drop filler manually |
+
+Never block execution waiting for an unavailable tool. Degrade gracefully and proceed.
 
 ---
 
