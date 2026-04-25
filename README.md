@@ -167,6 +167,8 @@ At session start, LENA reads the last few log entries and loads relevant prior n
 
 ### Lean CTX — Context management
 
+Download Lean CTX at [Lean CTX repo](https://github.com/yvgude/lean-ctx)
+
 Lean CTX compresses active context before each sub-agent call and injects a `## Context` block into the prompt. No raw conversation dumps — just the relevant state. Runs on every orchestrated step and when context window pressure rises.
 
 **Fallback:** manual context summary (task goal, decisions so far, current step, blockers) injected into each sub-agent prompt. Cap at 500 tokens per call.
@@ -174,6 +176,8 @@ Lean CTX compresses active context before each sub-agent call and injects a `## 
 ---
 
 ### Caveman — Output compression
+
+Download Caveman at [Caveman Repo](https://github.com/JuliusBrussee/caveman)
 
 Caveman compresses LENA's own output at a configurable intensity level. LENA inherits whatever level is active — she doesn't override it if you've already set it.
 
