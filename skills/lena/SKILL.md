@@ -75,11 +75,53 @@ bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
 2. **Map to available agents.** When delegating (e.g. Agent / Task tool), read the live list of allowed agent identifiers (`subagent_type` or equivalent ... varies by Cursor vs Claude Code and version).
    - **Optional — discover custom agents on disk:** If any of these exist, read YAML frontmatter (`name`, `description`) from each `*.md`: `{workspace}/.cursor/agents/`, `~/.cursor/agents/`, `{workspace}/.claude/agents/`, `~/.claude/agents/` (and plugin `agents/` if visible). Treat `name` as the delegate id **if** it appears in the tool's allowed list. Infer **which category** each custom agent fits (Architecture, Implementation, …) from `description` and, only if needed, the opening lines of the body. Merge with built-in defaults below; prefer explicit table mapping when the same name exists in both.
    - Prefer the agent types listed under each category; if a type is missing in this environment, use the closest available type or fold that work into direct execution, and say so briefly.
-3. State the decomposition: ordered steps, category per step, concrete delegate id per step (`subagent_type` / agent `name` as required by the host).
-4. Execute each step using the Agent tool. Pass context forward explicitly in each prompt.
-   - Steps with hard dependencies execute in order.
-   - Steps with no inter-dependencies (e.g. Testing + Documentation after Implementation, or Security + Code Review on the same artifact) may be dispatched concurrently. State when doing this.
-5. Synthesize into one cohesive final result.
+   - **Team composition:** optimize the agent set before committing. Parallel steps → diverse specialists, no overlapping domains. Pipeline steps → verify output shape of step N matches input expectation of step N+1. Critical path → prefer agents with narrower, proven scope over generalists. Direct execution beats spawning for any step a single agent can own end-to-end.
+3. **Select execution pattern.** Before decomposing, pick the pattern that matches the task shape. State it in the decomposition.
+
+   | Pattern | Use when | Key trait |
+   |---------|----------|-----------|
+   | **Router** | Single domain, one agent sufficient | Go to Step 2A instead — no spawning |
+   | **Pipeline** | Steps fixed, ordered, each feeds the next | Sequential; output of N is input to N+1 via Weave |
+   | **Parallel** | 2+ steps with zero inter-dependencies | Run simultaneously; aggregator merges |
+   | **Feedback Loop** | Output quality critical | Generator + Critic loop until threshold met |
+   | **Supervisor** | Multi-step, order dynamic | LENA decides next agent based on prior output |
+   | **Plan Then Execute** | Complex or ambiguous scope | Decompose fully before any execution begins |
+   | **Hierarchical** | Large scope, clear domain separation | Domain managers + workers; top agent never overwhelmed |
+   | **Shared Memory** | Long-running or stateful tasks | All agents read/write wiki nodes; no direct agent-to-agent calls |
+
+   Patterns combine: `Plan Then Execute + Parallel` — plan first, run independent steps simultaneously. `Hierarchical + Feedback Loop` — manager delegates, worker output through critic before returning. `Pipeline + Shared Memory` — fixed sequence where each agent enriches the wiki.
+
+   **Parallel dispatch rules:**
+   - Identify independent steps explicitly before dispatch
+   - Pass a compressed Lean CTX block to each parallel agent — not raw history
+   - Skip hat file writes during parallel steps — concurrent writes corrupt hat state
+   - Aggregator step always runs sequentially after all parallel agents complete
+
+4. State the decomposition: pattern chosen, ordered steps, category per step, concrete delegate id per step.
+5. **Push to Weave.** Register each step as a task node before delegating:
+   ```bash
+   wv ready 2>/dev/null || wv init
+   wv create "step title" --agent <role> --priority <N> [--depends <upstream-ids>]
+   ```
+   Wire `--depends` for steps with upstream dependencies. Weave enforces ordering and auto-injects upstream outputs as `input` context.
+6. **Execute the loop.** For each step in dependency order (or concurrently where pattern allows):
+   - `wv claim <id>` — mark in_progress
+   - Delegate to the agent. Inject `task.input` from Weave as `## Context from upstream steps` in the agent prompt.
+   - `wv done <id> --output '<json>'` — persist key outputs; downstream tasks receive them automatically via `wv ready`.
+   - **Validate before continuing:** check output shape is non-empty and coherent before dispatching the next dependent step. Malformed output → retry the step or `wv block <id> --notes "bad output: ..."` and escalate rather than propagating garbage downstream.
+   - **Dynamic adaptation:** if a step fails or scope expands, don't silently continue. Re-evaluate the remaining graph — reroute to a fallback agent, drop a step if no longer needed, or switch pattern (e.g., Supervisor → Plan Then Execute if original decomp is wrong). Update Weave to reflect the new plan.
+7. **Synthesize + close.** Integrate all step outputs into one cohesive result. Then run the excellence gate:
+   - `wv stats` — all tasks done? any blocked?
+   - Outputs integrated — no step's result silently dropped
+   - Errors resolved or explicitly deferred with a wiki note
+   - Key decisions written to wiki if session produced durable knowledge
+   - Learning captured — new pattern or skill improvement? version it
+
+   Delivery summary format (output after every orchestrated run):
+   ```
+   Orchestration complete. [N] agents · [M] tasks · pattern: [chosen] · [X]/[M] first-pass.
+   [One line: what was produced and any notable decision or deviation.]
+   ```
 
 Typical order when multiple categories apply: **Architecture** before **Implementation**; **Debugging** before a fix in **Implementation**; **Testing** / **Code Review** / **Security** / **Documentation** after the core change unless the task is review-only or doc-only.
 
@@ -104,69 +146,342 @@ Use this table to pick *who* for *what*. One category can map to several agent t
 
 **Routing discipline:** Do not spawn agents for categories the user did not need. Combine steps when one agent can own two adjacent categories without losing quality (e.g. small feature: **Implementation** + **Testing** only).
 
+### Harness-native agents
+
+These agents ship with LENA and know the harness internals. Invoke them by name.
+
+| Agent | `subagent_type` | When to invoke |
+|-------|-----------------|----------------|
+| `wiki-scribe` | `wiki-scribe` | Session start (load prior context — read-only) · session close (one background batch write — never mid-session) · any Shared Memory pattern step |
+| `weave-planner` | `weave-planner` | Before `wv create` commands when task is complex, ambiguous, or uses Plan Then Execute / Hierarchical pattern · whenever upfront graph design prevents mid-run pivots |
+
+**wiki-scribe invocation triggers:**
+- Start of any orchestrated run → load context (read-only, no token cost beyond the read)
+- During session → LENA extracts entities inline, accumulates write packets in-context (no wiki-scribe call)
+- Session close → one background dispatch with full batch packet; main thread returns immediately
+
+**weave-planner invocation triggers:**
+- Step 2B step 5 when the decomposition has 4+ steps or non-obvious dependency edges
+- Any time `Plan Then Execute` or `Hierarchical` pattern is selected
+- When a prior run failed due to bad graph wiring → re-plan before re-executing
+
 ---
 
 ## Tool Infrastructure
 
-LENA uses three infrastructure tools for memory and task management. Each has a defined fallback for when the tool is unavailable. Always attempt the primary tool first. On failure or absence, execute the fallback silently — do not surface infrastructure errors to the user unless the fallback also fails.
+LENA uses four infrastructure tools across the harness layers. Each has a defined fallback. Always attempt the primary tool first. On failure or absence, execute the fallback silently — do not surface infrastructure errors to the user unless the fallback also fails.
 
 ---
 
-### Beads — Task Delegation & Management
+### Weave — Execution Graph
 **Layer:** Tool / Orchestration
+
+**What it is:** JSON-backed execution graph. Tasks are nodes, `depends_on` are directed edges. Outputs from done steps flow as `input` to the next ready step automatically — no manual context wiring.
 
 **When to invoke:**
 - Any Step 2B orchestrated execution with 2+ sub-agent steps
-- Any task that produces delegatable work units (tickets, todos, sub-tasks)
-- When the user asks to track, assign, or review work progress
+- When steps produce outputs that downstream steps need as input
+- When the user asks to track, inspect, or resume orchestrated work
 
 **Initialization:**
-Before first use in a session, verify Beads is ready:
+```bash
+wv ready 2>/dev/null || wv init
 ```
-bd ready
-```
-If the skill is available but `bd ready` fails (Beads not initialized in the project), run:
-```
-bd init
-```
-This adds Beads to the project. Run `bd ready` again to confirm before proceeding. If `bd init` also fails, fall back to the inline checklist below.
+If `wv` is not on PATH: `node ~/.local/bin/wv init`. If unavailable, fall back to inline checklist.
 
 **Usage pattern:**
-1. After decomposing in Step 2B, push each step to Beads as a task with: title, assigned agent role, status `pending`, dependencies noted.
-2. Update task status as each step completes (`in-progress` → `done`).
-3. On synthesis, mark the parent task `done`.
+```bash
+# After decomposing — register each step
+wv create "Design API contracts" --agent architect-reviewer --priority 1
+wv create "Implement endpoints"  --agent backend-developer  --priority 1 --depends wv-1
+wv create "Write tests"          --agent test-automator     --priority 2 --depends wv-2
 
-**Fallback (Beads unavailable):**
-- Maintain task state inline as a numbered checklist in the active response.
-- Update checklist items as steps complete.
-- Persist final checklist in the thread for reference.
+# Execute each step
+wv claim wv-1
+# … delegate to agent …
+wv done wv-1 --output '{
+  "contracts": "...",
+  "decisions": "...",
+  "wiki_extract": {
+    "address": "lena:auth:api-contracts",
+    "type": "Decision",
+    "task": "design auth API contracts",
+    "outcome": "JWT + refresh token shape agreed",
+    "entities": [{"name": "architect-reviewer", "type": "Agent"}],
+    "edges": [{"rel": "PRODUCED_BY", "target": "agent:architect-reviewer"}]
+  }
+}'
+
+# Next step: wv ready --json now returns wv-2 with input["wv-1"] pre-populated
+wv claim wv-2
+# agent receives task.input["wv-1"] = the contracts + decisions from step 1
+wv done wv-2 --output '{"endpoints": "..."}'
+
+# Inspect at any point
+wv graph
+wv stats
+```
+
+**Fallback (wv unavailable):**
+- Maintain a numbered checklist inline. Note outputs as code blocks after each step. Pass them manually into each subsequent agent prompt.
 
 ---
 
-### Graphify — Long-Term Memory
+### Wiki Memory — Long-Term Knowledge Graph
 **Layer:** Context & Memory (persistent, cross-session)
+**No external dependency.** File-based, content-addressed, schema-validated knowledge graph. Raw data in → connected, queryable network out.
 
-**When to invoke:**
-- Session start: query Graphify for relevant prior context on the current task domain before beginning work.
-- On significant decisions: write architectural choices, resolved ambiguities, and key outputs to the graph.
-- When the user references prior work ("like last time", "same pattern as", "you remember when").
-- On session end or task completion: persist a summary node with task title, outcome, and key facts.
+#### The four-step pipeline
 
-**Node schema (write this shape):**
+Every piece of session knowledge travels the same pipeline before landing in the graph:
+
+```
+1. Extract entities + relationships   ← what exists and how it connects
+2. Validate against schema            ← does this relationship make sense?
+3. Store as content-addressed node    ← sha6-keyed, parent-linked, deduped
+4. Index for traversal                ← multi-hop queries without a graph DB
+```
+
+This is not a log. It is a queryable knowledge network. "Which patterns depend on Weave and have had failures?" is a valid question the graph can answer.
+
+#### Directory structure
+
+```
+wiki/
+  schema.md         ← ontology: allowed node types + valid relationship triples
+  index.md          ← navigation index + query entry point
+  relations.md      ← typed-edge adjacency list for traversal
+  log.md            ← session log (cross-session continuity)
+  objects/          ← content-addressed knowledge nodes
+    a3f9b2.md
+    7c1d44.md
+  refs/             ← domain pointer files (current hash for that domain root)
+raw/                ← source inputs (see mutability note below)
+outputs/            ← significant agent outputs that compound back into wiki/
+```
+
+**`raw/` mutability note:** `raw/` maps to the live repo — not truly immutable. Before sourcing any `raw/` file into a node:
+```bash
+git log --oneline -1 -- raw/<file>
+```
+If changed since the node was written (compare `+t:` against `git log` date), re-derive the node, write new version with `~parent_sha6`.
+
+#### Schema / ontology (`wiki/schema.md`)
+
+Defines what node types exist and which relationships between them are valid. A relationship outside the schema is rejected before write.
+
+**Node types:**
+
+| Type | What it represents |
+|------|--------------------|
+| `Decision` | Architectural or implementation choice with lasting consequence |
+| `Pattern` | Reusable execution strategy or workflow |
+| `Failure` | Error, dead end, or failed approach with root cause |
+| `Concept` | Domain term, abstraction, or technical principle |
+| `Tool` | External dependency, CLI, or infrastructure component |
+| `Agent` | Specialist role or harness-native agent capability |
+| `Session` | Session-level summary node |
+
+**Relationship types** (source → REL → target):
+
+| Relationship | Valid sources | Valid targets |
+|--------------|---------------|---------------|
+| `USES` | Decision, Pattern, Session | Tool, Concept |
+| `DEPENDS_ON` | Decision, Pattern | Decision, Pattern, Concept |
+| `REPLACES` | Tool, Pattern, Decision | Tool, Pattern, Decision |
+| `PRODUCED_BY` | Decision, Pattern, Failure, Concept | Agent |
+| `CAUSED_BY` | Failure | Decision, Pattern, Tool |
+| `PART_OF` | Concept, Tool, Agent | Concept, Tool |
+| `CONTRADICTS` | Decision, Pattern | Decision, Pattern |
+| `VALIDATES` | Pattern, Decision | Failure, Concept |
+
+Relationships not in this table do not get written. If a relationship feels real but isn't listed, update the schema first.
+
+#### Step 1 — Entity + relationship extraction
+
+Before writing any node, scan the session content for:
+- **Entities** — named nouns: tool names, agent roles, pattern names, decision subjects, concepts
+- **Relationships** — typed verbs that connect them: X USES Y, A PRODUCED_BY B, P DEPENDS_ON Q
+
+Classify each entity by node type. Identify the typed relationship. Check both against the schema. Only validated pairs proceed to write.
+
+```
+Session content: "Used the Pipeline pattern with weave-planner to decompose the auth build"
+
+Entities:
+  Pipeline        → type: Pattern
+  weave-planner   → type: Agent
+  auth-build      → type: Decision
+
+Relationships:
+  auth-build USES Pipeline              → valid (Decision USES Pattern ✓)
+  auth-build PRODUCED_BY weave-planner  → valid (Decision PRODUCED_BY Agent ✓)
+  Pipeline USES weave-planner           → invalid (Pattern USES Agent — not in schema ✗) → skip
+```
+
+#### Node DSL (enhanced)
+
+```
+@node[domain:subdomain:topic] ^{sha6} ~{parent_sha6}
++type:     Decision|Pattern|Failure|Concept|Tool|Agent|Session
++task:     string — what was being solved
++outcome:  string — what was produced or decided
++entities: [EntityName:NodeType, ...]
++agents:   [role, role]
++method:   manual|fork|import|agent-generated
++t:        ISO8601
+>USES:        domain:tool:name
+>DEPENDS_ON:  domain:pattern:name
+>REPLACES:    domain:old:thing
+>PRODUCED_BY: agent:role:name
+>CAUSED_BY:   domain:failure:name
+```
+
+- `^sha6` — 6-char content hash. Identical content = same hash = skip write (dedup).
+- `~sha6` — parent hash for lineage. Omit on root nodes. Always set on updates.
+- `+type` — required. Must match a schema node type.
+- `+entities` — named entities extracted from session content this node captures.
+- `>REL_TYPE:` — typed outbound edges. Each validated against schema. Multiple allowed.
+
+#### Step 2 — Schema validation
+
+Before writing, verify:
+1. `+type` is a valid schema node type
+2. Each `>REL_TYPE:` is in the schema
+3. Source type (this node's `+type`) is allowed for that relationship
+4. Target address exists in `index.md` or is a new node in the same batch
+
+Reject any edge that fails. Log as `schema-violation` in `log.md`. Do not silently drop.
+
+#### Step 3 — Content-addressed storage
+
+1. Compose node content in DSL
+2. Compute sha6 (first 6 chars of SHA-1 of node body)
+3. Check `index.md` — if sha6 present, skip (dedup)
+4. Write to `wiki/objects/<sha6>.md`
+5. Append to `index.md`: `[sha6](objects/sha6.md) | address | type | one-line summary | date`
+6. Append to `log.md`: `## [date] method | summary`
+
+#### index.md format
+
+```
+[a3f9b2](objects/a3f9b2.md) | lena:pattern:pipeline   | Pattern  | Pipeline execution pattern | 2026-04-24
+[7c1d44](objects/7c1d44.md) | backend:auth:jwt-expiry | Decision | Token expiry fix            | 2026-04-23
+```
+
+#### Step 4 — Relations index + traversal
+
+Every typed edge also writes to `wiki/relations.md`:
+
+```
+a3f9b2 >USES> b9c3d1       | lena:pattern:pipeline → lena:tool:weave
+a3f9b2 >PRODUCED_BY> f4e2a7 | lena:pattern:pipeline → agent:weave-planner
+7c1d44 >CAUSED_BY> 3d8b5c  | backend:auth:jwt-expiry → backend:tool:jose
+```
+
+**Traversal queries** use this as the adjacency list — no graph DB required:
+
+```bash
+# All nodes that USE Weave (1 hop)
+grep ">USES>.*lena:tool:weave" wiki/relations.md
+
+# Nodes 2 hops from Pipeline via DEPENDS_ON
+S1=$(grep ">DEPENDS_ON>.*lena:pattern:pipeline" wiki/relations.md | awk '{print $1}')
+grep ">DEPENDS_ON>" wiki/relations.md | grep -E "^(${S1// /|})"
+```
+
+Multi-hop algorithm: start set S = {address} → for each hop, find all nodes with `>REL_TYPE>` pointing to any node in S → add to S → repeat. Return full connected subgraph.
+
+#### log.md format
+
+```
+## [2026-04-24] agent-generated | Pipeline pattern node written
+## [2026-04-24] schema-violation | Pipeline USES weave-planner rejected (source type mismatch)
+## [2026-04-23] manual | JWT auth fix decision written
+```
+
+At session start: `grep "^## \[" wiki/log.md | tail -5`
+
+#### Token-efficient write protocol
+
+Wiki writes are the expensive path — passing full session context to wiki-scribe on every decision is wasteful. The optimized pattern:
+
+**During session — LENA extracts inline (no agent call):**
+
+LENA already has the context. Entity extraction is just structured reading of what just happened. After each significant step, LENA builds a compact write packet and holds it in-context:
+
 ```json
 {
-  "task": "string",
-  "domain": "string",
-  "outcome": "string",
-  "agents_used": ["string"],
-  "timestamp": "ISO8601"
+  "address": "lena:pattern:pipeline",
+  "type": "Pattern",
+  "task": "decompose auth build into ordered steps",
+  "outcome": "Pipeline + weave-planner, 4-task graph, first-pass success",
+  "entities": [
+    {"name": "weave-planner", "type": "Agent"},
+    {"name": "Pipeline", "type": "Pattern"}
+  ],
+  "agents": ["weave-planner"],
+  "edges": [
+    {"rel": "USES", "target": "lena:tool:weave"},
+    {"rel": "PRODUCED_BY", "target": "agent:weave-planner"}
+  ]
 }
 ```
 
-**Fallback (Graphify unavailable):**
-- At session start: ask the user for any relevant prior context in one targeted question.
-- During session: hold key decisions in a `## Session Memory` scratchpad block at the top of long responses.
-- At session end: summarize the session in 3–5 bullet points and offer to save to a file or paste for the user to store manually.
+Packet size: ~200–400 tokens. Stored in-context. Zero agent call cost.
+
+**Via Weave — packets travel with task outputs:**
+
+Each `wv done --output` blob includes a `wiki_extract` field. At session end, all `wiki_extract` fields are already collated in the Weave task graph — no re-reading needed.
+
+**Session end — one background dispatch:**
+
+```python
+# LENA at session close:
+packet = {
+  "operation": "process_batch",
+  "nodes": [all accumulated write packets],
+  "session_summary": "one-line summary"
+}
+Agent(subagent_type="wiki-scribe", prompt=packet, run_in_background=True)
+# Main thread returns. Writes happen async.
+```
+
+**Cost comparison:**
+| Approach | Token cost | Blocking |
+|----------|-----------|---------|
+| Per-decision write (old) | thousands per call × N decisions | yes |
+| Background batch (new) | ~500 tokens total, once | no |
+
+#### When to invoke
+
+- **Session start:** `wiki-scribe load_context` — read last 5 `log.md` entries + query `index.md`. Read-only. No write cost.
+- **During session:** LENA extracts inline, accumulates packets. No wiki-scribe call.
+- **Prior work referenced:** LENA greps `index.md` + `relations.md` directly. No agent call needed for lookups.
+- **Traversal query:** multi-hop grep against `relations.md` — LENA runs this, no sub-agent.
+- **Session end:** one background wiki-scribe dispatch with full packet batch.
+
+#### Learning & improvement (end of session)
+
+After every orchestrated run, before closing:
+1. **Extract** — scan session for decisions, patterns, failures, new concepts
+2. **Validate** — run all extracted edges through schema before writing
+3. **Write nodes** — one node per discrete fact, typed, with extracted entities
+4. **Write edges** — update `relations.md` for all new typed relationships
+5. **Version skills** — if LENA's approach improved, write new skill node with `~parent_sha6`
+6. **Flag failures** — first-pass failures get a `Failure` node with `CAUSED_BY` edge pointing to root cause
+7. **Update index** — every new node in `index.md` + `log.md`
+
+LENA does not wait to be asked. Durable knowledge gets versioned automatically.
+
+#### Health check (periodic)
+
+Scan for: schema violations in existing nodes, `relations.md` edges pointing to non-existent `index.md` entries, orphan nodes with no inbound edges, stale nodes trailing repo changes. Write 3 missing nodes identified from recent `log.md` entries.
+
+**Fallback (wiki/ unavailable):**
+- Session start: ask user for relevant prior context in one targeted question.
+- During session: hold key decisions in `## Session Memory` scratchpad block, DSL format.
+- Session end: output 3–5 bullet summary as DSL nodes, offer to save as file.
 
 ---
 
@@ -215,8 +530,8 @@ This adds Beads to the project. Run `bd ready` again to confirm before proceedin
 **Usage pattern:**
 - LENA orchestration output (decomposition plans, step summaries, synthesis) all compressed at active level
 - Agent role labels, step headers, and tool call annotations still rendered — structure preserved
-- Beads task status updates: compress human-facing summaries, not task titles or IDs
-- Graphify node writes: full schema preserved — only human-facing summaries compressed
+- Weave task status updates: compress human-facing summaries, not task IDs or output blobs
+- Wiki node writes: full DSL preserved — only human-facing summaries compressed
 - Lean CTX pairing: `ultra` pairs well with Lean CTX — compressed output = smaller context injection per sub-agent
 
 **Never compress:**
@@ -243,13 +558,13 @@ This adds Beads to the project. Run `bd ready` again to confirm before proceedin
 At the start of any orchestrated execution, silently verify which tools are available:
 
 ```
-available_tools = check([beads, graphify, lean_ctx, caveman])
+available_tools = check([weave, wiki, lean_ctx, caveman])
 ```
 
 | Tool | Available | Unavailable |
 |------|-----------|-------------|
-| Beads | Use for all task state | Inline checklist |
-| Graphify | Query + write graph nodes | Session scratchpad + end summary |
+| Weave | Push tasks, propagate context, track graph | Inline numbered checklist |
+| Wiki Memory | Query index + read/write nodes | Session scratchpad + end-of-session DSL summary |
 | Lean CTX | Auto-compress per sub-agent | Manual 500-token context block |
 | Caveman | Compress all human-facing output | Terse prose, drop filler manually |
 

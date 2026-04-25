@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "AI orchestrator for Claude Code. Routes tasks to specialists or coordinates multi-agent workflows.",
   "bin": {
-    "lena-ai": "./install.js"
+    "lena-ai": "./install.js",
+    "wv": "./bin/wv"
   },
   "keywords": [
     "ai",
@@ -26,7 +27,9 @@
   "homepage": "https://github.com/justjammin/lena",
   "files": [
     "install.js",
+    "bin/",
     "skills/",
+    "agents/",
     ".claude-plugin/"
   ],
   "engines": {
