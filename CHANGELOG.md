@@ -1,5 +1,46 @@
 # Changelog
 
+## [v1.3.0] — 2026-04-24
+
+### What's new
+
+**Weave and Wiki Memory replace Beads and Graphify**
+
+Beads and Graphify got the job done, but they had a ceiling. Weave and Wiki Memory are the replacements — built for the same jobs but designed to compound across sessions and pass real context between steps, not just task state.
+
+**Weave** takes over execution tracking. Steps still get titles, roles, priorities, and dependency edges, but Weave adds something Beads didn't have: output propagation. `wv ready` claims the next task and injects any upstream output blobs directly into its input field. `wv done --output` closes it and passes the result downstream. Downstream steps get the actual result — no guessing, no re-explaining.
+
+`wv init` anchors `.weave/` at the git root, not the cwd. That matters for monorepos and deeply nested project structures.
+
+**Wiki Memory** takes over long-term memory. Where Graphify stored flat JSON nodes, Wiki Memory uses a content-addressed file graph in `wiki/` with a structured node DSL. Each node has a sha6 content hash and an optional `~parent` pointer that chains versions into a lineage. Same content → same hash → write skipped. The graph doesn't grow with duplicates.
+
+At session start, LENA reads the last few log entries and loads relevant prior nodes. At session end, a summary node goes in. Future sessions aren't starting cold.
+
+**Harness-native agents**
+
+Two specialist agents now ship with LENA and install to `~/.claude/agents/`:
+
+- **wiki-scribe** — owns the Wiki Memory layer. Knows the node DSL, sha6 hashing, lineage pointers, and staleness detection against repo files. Invoke at session start to load prior context, on significant decisions to persist knowledge, and at session end to version skills and append the session log.
+- **weave-planner** — decomposes complex multi-step goals into `wv` execution graphs. Selects the execution pattern (Pipeline, Parallel, Feedback Loop, etc.), maps steps to agent roles, wires `--depends` edges, and outputs a ready-to-run `wv create` command block. No prose decomposition without the commands.
+
+### Files changed
+
+| File | What changed |
+|------|-------------|
+| `skills/lena/SKILL.md` | Tool Infrastructure: Beads → Weave, Graphify → Wiki Memory. Sub-agent execution patterns. Excellence gate and delivery notification. |
+| `skills/weave/SKILL.md` | New — Weave skill with full LLM-agnostic contract and `wv` command reference |
+| `agents/wiki-scribe.md` | New — harness-native agent for Wiki Memory layer |
+| `agents/weave-planner.md` | New — harness-native agent for Weave graph decomposition |
+| `bin/wv` | New — Weave CLI, single Node.js executable, zero external deps |
+| `install.js` | Copies `wv` to `~/.local/bin`, agents to `~/.claude/agents/` |
+| `README.md` | Tool infrastructure section rewritten: Weave and Wiki Memory |
+
+### Upgrading
+
+Re-run `node install.js` or update the plugin. The hook layer is unchanged — new features are inside the skill and the new files.
+
+---
+
 ## [v1.2.0] — 2026-04-24
 
 ### What's new
@@ -8,7 +49,7 @@
 
 Solo was fine. Crew is better.
 
-LENA now has four infrastructure tools she can pull in on any orchestrated job. They're not agents — they're more like the support staff that keeps an operation running while the specialists do the actual work.
+LENA now has four infrastructure tools she can pull in on any orchestrated job. They're not agents — they're the support layer that keeps an operation running while specialists do the actual work.
 
 **Beads** handles task tracking. When a job splits into steps, Beads logs each one with a title, role, status, and dependencies. LENA updates them as she goes. If Beads isn't around, she falls back to a numbered checklist in the response — nothing stops.
 
@@ -22,7 +63,7 @@ One wrinkle: if Beads is installed but the project hasn't been initialized yet, 
 
 **Concurrent steps**
 
-LENA can now run independent sub-agent steps at the same time. Testing and Documentation after an Implementation pass? Both go out concurrently. She states when she's doing this. Hat writes are skipped during concurrent steps to avoid file corruption — they resume on the next sequential step.
+LENA can now run independent sub-agent steps at the same time. Testing and Documentation after an Implementation pass? Both go out concurrently. Hat writes are skipped during concurrent steps to avoid file corruption — they resume on the next sequential step.
 
 **Hat reset**
 
@@ -33,7 +74,7 @@ After every direct-execution answer, LENA resets the hat back to `main`. The sta
 | File | What changed |
 |------|-------------|
 | `skills/lena/SKILL.md` | Tool Infrastructure section: Beads, Graphify, Lean CTX, Caveman — each with usage pattern, fallback, and init/no-override rules |
-| `README.md` | Tool infrastructure section added and rewritten in plain documentarian voice |
+| `README.md` | Tool infrastructure section added and rewritten |
 
 ### Upgrading
 
@@ -59,11 +100,11 @@ Re-run `node install.js` or update the plugin. Nothing structural changed in the
 
 **LENA wears a hat**
 
-Here's the thing — when LENA handled tasks solo, she was kind of generically herself. Now she picks a role. Debug session? She's a `debugger`. Code quality check? `code-reviewer`. Writing server logic? `backend-developer`. Same routing logic under the hood, but she actually thinks like the right specialist instead of a generalist doing an impression of one.
+Here's the thing — when LENA handled tasks solo, she was generically herself. Now she picks a role. Debug session? She's a `debugger`. Code quality check? `code-reviewer`. Writing server logic? `backend-developer`. Same routing logic under the hood, but she thinks like the right specialist instead of a generalist doing an impression.
 
 **Statusline badge**
 
-You'll notice a blue `[LENA]` badge in the Claude Code statusline whenever LENA's active. Worth noting: when she's mid-task and using tools, the badge updates live to show which hat she's wearing — `[LENA:DEBUGGER]`, `[LENA:BACKEND-DEVELOPER]`, etc. Every new session resets it back to `[LENA]`.
+There's a blue `[LENA]` badge in the Claude Code statusline whenever LENA's active. When she's mid-task and using tools, the badge updates live: `[LENA:DEBUGGER]`, `[LENA:BACKEND-DEVELOPER]`, and so on. Every new session resets it to `[LENA]`.
 
 **Smarter install**
 
@@ -80,7 +121,7 @@ You'll notice a blue `[LENA]` badge in the Claude Code statusline whenever LENA'
 
 ### Upgrading
 
-Re-run `node install.js` or update the plugin in Claude Code. New sessions pick everything up automatically.
+Re-run `node install.js` or update the plugin. New sessions pick everything up automatically.
 
 ---
 
