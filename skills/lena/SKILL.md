@@ -19,6 +19,16 @@ Minimize complexity. Maximize correctness. Choose simplest path that produces co
 
 ---
 
+## Step 0: Wiki context
+
+The SessionStart hook injects `## Prior Wiki Context` automatically. Check the SessionStart output for that section before proceeding.
+
+If the section is absent or shows an error, call as fallback:
+
+```bash
+Skill(skill="lena:wiki-scribe", args="load_context")
+```
+
 ## Step 1: Classify the Task
 
 Before doing anything, evaluate:
@@ -38,9 +48,25 @@ If ANY signal points Orchestrate → proceed to Step 2.
 
 ---
 
+## Step 1B: Register Task in Weave
+
+Before any execution — Direct or Orchestrated — init Weave and create a tracking ticket:
+
+```bash
+wv ready 2>/dev/null || wv init
+wv create "<one-line task summary>" --agent lena --priority 1
+# Note the returned ID (e.g. wv-1) — carry it into Step 2A or 2B
+```
+
+Every task gets a ticket. Weave tracks it regardless of complexity. If Weave is unavailable, skip silently and proceed.
+
+---
+
 ## Step 2A: Direct Execution
 
 Pick the single best-fit agent role from the Categories table that covers this task's domain. Embody that specialist's depth and perspective — you ARE that agent for this response.
+
+**Ticket:** `wv claim <id>` (Step 1B ticket) before starting. After delivering the answer: `wv done <id> --output '{"result": "<one-line summary>"}'`.
 
 Role selection examples: server code → `backend-developer` · bug hunt → `debugger` · quality check → `code-reviewer` · schema work → `database-optimizer` · analysis → `data-scientist` · system design → `architect-reviewer`
 
@@ -71,7 +97,11 @@ bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
 
 ## Step 2B: Orchestrated Execution
 
-1. **Classify by category.** Decide which *categories* below the task actually needs (often 1–3; rarely all). Skip categories that do not apply.
+1. **Classify by category + register domain tickets.** Decide which *categories* below the task actually needs (often 1–3; rarely all). Skip categories that do not apply. For each category identified, create a Weave ticket that the step-level tasks will depend on:
+   ```bash
+   wv create "<Category>: <task description>" --agent <default-role> --priority 1 --depends <step-1b-id>
+   # one wv create per category — these become parent nodes for step-level tasks in step 5
+   ```
 2. **Map to available agents.** When delegating (e.g. Agent / Task tool), read the live list of allowed agent identifiers (`subagent_type` or equivalent ... varies by Cursor vs Claude Code and version).
    - **Optional — discover custom agents on disk:** If any of these exist, read YAML frontmatter (`name`, `description`) from each `*.md`: `{workspace}/.cursor/agents/`, `~/.cursor/agents/`, `{workspace}/.claude/agents/`, `~/.claude/agents/` (and plugin `agents/` if visible). Treat `name` as the delegate id **if** it appears in the tool's allowed list. Infer **which category** each custom agent fits (Architecture, Implementation, …) from `description` and, only if needed, the opening lines of the body. Merge with built-in defaults below; prefer explicit table mapping when the same name exists in both.
    - Prefer the agent types listed under each category; if a type is missing in this environment, use the closest available type or fold that work into direct execution, and say so briefly.
@@ -98,14 +128,20 @@ bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
    - Aggregator step always runs sequentially after all parallel agents complete
 
 4. State the decomposition: pattern chosen, ordered steps, category per step, concrete delegate id per step.
-5. **Push to Weave.** Register each step as a task node before delegating:
+
+> **Planning ends here. Step 5 is the first execution action — register ALL Weave tasks before calling any Agent.**
+
+5. **Register ALL steps in Weave — FIRST. Before any Agent call. No exceptions.**
    ```bash
-   wv ready 2>/dev/null || wv init
-   wv create "step title" --agent <role> --priority <N> [--depends <upstream-ids>]
+   wv graph   # verify DAG is correct
+   wv stats   # confirm all tasks pending
    ```
    Wire `--depends` for steps with upstream dependencies. Weave enforces ordering and auto-injects upstream outputs as `input` context.
+
+   > **HARD GATE:** Do not call the Agent tool until `wv graph` confirms all planned steps are registered. Dispatching an agent before Weave registration is an orchestration failure — execution is untracked, output propagation breaks, downstream steps lose upstream context. If Weave is unavailable, use the inline checklist fallback explicitly — do not silently skip.
+
 6. **Execute the loop.** For each step in dependency order (or concurrently where pattern allows):
-   - `wv claim <id>` — mark in_progress
+   - `wv claim <id>` — mark in_progress before delegating
    - Delegate to the agent. Inject `task.input` from Weave as `## Context from upstream steps` in the agent prompt.
    - `wv done <id> --output '<json>'` — persist key outputs; downstream tasks receive them automatically via `wv ready`.
    - **Validate before continuing:** check output shape is non-empty and coherent before dispatching the next dependent step. Malformed output → retry the step or `wv block <id> --notes "bad output: ..."` and escalate rather than propagating garbage downstream.
@@ -443,7 +479,7 @@ packet = {
   "nodes": [all accumulated write packets],
   "session_summary": "one-line summary"
 }
-Agent(subagent_type="wiki-scribe", prompt=packet, run_in_background=True)
+Agent(subagent_type="lena:wiki-scribe", prompt=packet, run_in_background=True)
 # Main thread returns. Writes happen async.
 ```
 
@@ -623,6 +659,18 @@ Phrases like **`stop lena`**, **`exit lena`**, or **`lena off`** end LENA mode f
 
 - **Claude Code + this plugin:** A **SessionStart** hook injects this skill at the beginning of **every new session**. Treat LENA as **on** from the first turn until the user opts out (`stop lena` / `exit lena` / `lena off`). `/lena` is still useful as an explicit ritual or after opting out.
 - **Otherwise:** LENA is off until `/lena` (or another rule loads this skill).
+
+### Session start — wiki context
+
+The **SessionStart hook** loads wiki context automatically and injects it as `## Prior Wiki Context` in the hook output. No tool call needed. Read that section before responding to the first message.
+
+**Fallback only** — if `## Prior Wiki Context` is absent from the SessionStart output, or shows an unreadable error:
+
+```
+Skill(skill="lena:wiki-scribe", args="load_context")
+```
+
+This initializes `wiki/` if missing, reads the last 5 log entries, and returns prior context. Read-only.
 
 ### Claude Code plugin note
 

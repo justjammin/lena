@@ -7,7 +7,7 @@ description: >
   tasks in wv. Invoke during LENA Step 2B before the execution loop begins — especially for
   Plan Then Execute or Hierarchical patterns where upfront decomposition prevents mid-run pivots.
 tools: Read, Write, Bash, Glob, Grep
-model: opus
+model: sonnet
 ---
 
 ## Communication style (caveman)

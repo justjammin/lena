@@ -4,21 +4,27 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const SKILL_SRC        = path.join(__dirname, 'skills', 'lena', 'SKILL.md');
-const WEAVE_SKILL_SRC  = path.join(__dirname, 'skills', 'weave', 'SKILL.md');
-const CLAUDE_DIR       = path.join(os.homedir(), '.claude');
-const CLAUDE_SKILLS_DIR       = path.join(CLAUDE_DIR, 'skills', 'lena');
-const WEAVE_CLAUDE_SKILLS_DIR = path.join(CLAUDE_DIR, 'skills', 'weave');
-const SKILL_DEST       = path.join(CLAUDE_SKILLS_DIR, 'SKILL.md');
-const WEAVE_SKILL_DEST = path.join(WEAVE_CLAUDE_SKILLS_DIR, 'SKILL.md');
+const SKILL_SRC              = path.join(__dirname, 'skills', 'lena', 'SKILL.md');
+const WEAVE_SKILL_SRC        = path.join(__dirname, 'skills', 'weave', 'SKILL.md');
+const WIKI_SCRIBE_SKILL_SRC  = path.join(__dirname, 'skills', 'wiki-scribe', 'SKILL.md');
+const CLAUDE_DIR                    = path.join(os.homedir(), '.claude');
+const CLAUDE_SKILLS_DIR             = path.join(CLAUDE_DIR, 'skills', 'lena');
+const WEAVE_CLAUDE_SKILLS_DIR       = path.join(CLAUDE_DIR, 'skills', 'weave');
+const WIKI_SCRIBE_CLAUDE_SKILLS_DIR = path.join(CLAUDE_DIR, 'skills', 'wiki-scribe');
+const SKILL_DEST             = path.join(CLAUDE_SKILLS_DIR, 'SKILL.md');
+const WEAVE_SKILL_DEST       = path.join(WEAVE_CLAUDE_SKILLS_DIR, 'SKILL.md');
+const WIKI_SCRIBE_SKILL_DEST = path.join(WIKI_SCRIBE_CLAUDE_SKILLS_DIR, 'SKILL.md');
 const SETTINGS_PATH    = path.join(CLAUDE_DIR, 'settings.json');
-const HOOK_COMMAND     = `node "${path.join(__dirname, 'hooks', 'lena-activate.js')}"`;
-const HOOKS_DIR        = path.join(CLAUDE_DIR, 'hooks');
-const STATUSLINE_SRC   = path.join(__dirname, 'hooks', 'lena-statusline.sh');
-const STATUSLINE_DEST  = path.join(HOOKS_DIR, 'lena-statusline.sh');
-const WV_SRC           = path.join(__dirname, 'bin', 'wv');
+const HOOKS_DIR         = path.join(CLAUDE_DIR, 'hooks');
+const ACTIVATE_SRC      = path.join(__dirname, 'hooks', 'lena-activate.js');
+const ACTIVATE_DEST     = path.join(HOOKS_DIR, 'lena-activate.js');
+const HOOK_COMMAND      = `node "${ACTIVATE_DEST}"`;
+const STATUSLINE_SRC    = path.join(__dirname, 'hooks', 'lena-statusline.sh');
+const STATUSLINE_DEST   = path.join(HOOKS_DIR, 'lena-statusline.sh');
+const WV_SRC           = path.join(__dirname, 'hooks', 'wv.js');
 const LOCAL_BIN        = path.join(os.homedir(), '.local', 'bin');
-const WV_DEST          = path.join(LOCAL_BIN, 'wv');
+const WV_DEST          = path.join(LOCAL_BIN, 'wv.js');
+const WV_WRAPPER_DEST  = path.join(LOCAL_BIN, 'wv');
 const AGENTS_SRC_DIR   = path.join(__dirname, 'agents');
 const AGENTS_DEST_DIR  = path.join(CLAUDE_DIR, 'agents');
 
@@ -40,12 +46,21 @@ function install() {
   }
   fs.copyFileSync(WEAVE_SKILL_SRC, WEAVE_SKILL_DEST);
 
+  // Copy wiki-scribe skill
+  if (!fs.existsSync(WIKI_SCRIBE_CLAUDE_SKILLS_DIR)) {
+    fs.mkdirSync(WIKI_SCRIBE_CLAUDE_SKILLS_DIR, { recursive: true });
+  }
+  fs.copyFileSync(WIKI_SCRIBE_SKILL_SRC, WIKI_SCRIBE_SKILL_DEST);
+
   // Install wv CLI to ~/.local/bin
   if (!fs.existsSync(LOCAL_BIN)) {
     fs.mkdirSync(LOCAL_BIN, { recursive: true });
   }
   fs.copyFileSync(WV_SRC, WV_DEST);
   try { fs.chmodSync(WV_DEST, 0o755); } catch (_) {}
+  // Shell wrapper so `wv` resolves to the .js file without extension confusion
+  fs.writeFileSync(WV_WRAPPER_DEST, `#!/bin/sh\nexec node "${WV_DEST}" "$@"\n`);
+  try { fs.chmodSync(WV_WRAPPER_DEST, 0o755); } catch (_) {}
 
   // Copy harness-native agents to ~/.claude/agents/
   if (!fs.existsSync(AGENTS_DEST_DIR)) {
@@ -59,10 +74,11 @@ function install() {
     );
   }
 
-  // Copy statusline script
+  // Copy hook scripts to ~/.claude/hooks/
   if (!fs.existsSync(HOOKS_DIR)) {
     fs.mkdirSync(HOOKS_DIR, { recursive: true });
   }
+  fs.copyFileSync(ACTIVATE_SRC, ACTIVATE_DEST);
   fs.copyFileSync(STATUSLINE_SRC, STATUSLINE_DEST);
   try { fs.chmodSync(STATUSLINE_DEST, 0o755); } catch (_) {}
 
@@ -116,6 +132,7 @@ function install() {
   console.log('');
   console.log('  Skill:  ~/.claude/skills/lena/SKILL.md');
   console.log('  Skill:  ~/.claude/skills/weave/SKILL.md');
+  console.log('  Skill:  ~/.claude/skills/wiki-scribe/SKILL.md');
   console.log('  CLI:    ~/.local/bin/wv');
   for (const file of agentFiles) {
     console.log(`  Agent:  ~/.claude/agents/${file}`);
