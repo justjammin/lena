@@ -19,31 +19,19 @@ Minimize complexity. Maximize correctness. Choose simplest path that produces co
 
 ---
 
-## Step 0: Session context
+## Step 1: Session context
 
-At session start, load prior context via lean-ctx:
-
-```python
-ctx_session(action="load")         # restore prior session state (~400 tok)
-ctx_knowledge(action="wakeup")     # compact AAAK briefing of project facts
-```
-
-**Repo analysis check:** Recall if repo overview was stored this HEAD:
+At session start, before responding to the first message:
 
 ```python
-result = ctx_knowledge(action="recall", query="repo:overview")
-head = ctx_shell("git rev-parse --short=6 HEAD")
-# If absent or head mismatch → run fresh analysis and store
-if not result or head not in result:
-    arch  = ctx_architecture(action="overview", root=".")
-    graph = ctx_graph(action="build", project_root=".")
-    ctx_knowledge(action="remember", category="architecture",
-                  key="repo:overview", value=f"{arch} | head:{head}")
+ctx_session(action="load")              # restore prior session state (~400 tok)
+ctx_knowledge(action="wakeup")          # compact project facts briefing
+ctx_overview(task=<first_task_summary>) # task-scoped project map (handles monorepos, scoping, graph)
 ```
 
-Cost: read-only on warm sessions. Analysis only fires on first session or HEAD change.
+Run silently. Do not dump output into visible chat.
 
-## Step 1: Classify the Task
+## Step 2: Classify the Task
 
 Before doing anything, evaluate:
 
@@ -58,29 +46,29 @@ Before doing anything, evaluate:
 | User says "build", "refactor", "fix system-wide" | → Orchestrate |
 
 If ALL signals point Direct → execute immediately, no agent spawning.
-If ANY signal points Orchestrate → proceed to Step 2.
+If ANY signal points Orchestrate → proceed to Step 3.
 
 ---
 
-## Step 1B: Register Task in Weave
+## Step 2B: Register Task in Weave
 
 Before any execution — Direct or Orchestrated — init Weave and create a tracking ticket:
 
 ```bash
 wv ready 2>/dev/null || wv init
 wv create "<one-line task summary>" --agent lena --priority 1
-# Note the returned ID (e.g. wv-1) — carry it into Step 2A or 2B
+# Note the returned ID (e.g. wv-1) — carry it into Step 3A or 3B
 ```
 
 Every task gets a ticket. Weave tracks it regardless of complexity. If Weave is unavailable, skip silently and proceed.
 
 ---
 
-## Step 2A: Direct Execution
+## Step 3A: Direct Execution
 
 Pick the single best-fit agent role from the Categories table that covers this task's domain. Embody that specialist's depth and perspective — you ARE that agent for this response.
 
-**Ticket:** `wv claim <id>` (Step 1B ticket) before starting. After delivering the answer: `wv done <id> --output '{"result": "<one-line summary>"}'`.
+**Ticket:** `wv claim <id>` (Step 2B ticket) before starting. After delivering the answer: `wv done <id> --output '{"result": "<one-line summary>"}'`.
 
 Role selection examples: server code → `backend-developer` · bug hunt → `debugger` · quality check → `code-reviewer` · schema work → `database-optimizer` · analysis → `data-scientist` · system design → `architect-reviewer`
 
@@ -109,7 +97,7 @@ bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
 
 ---
 
-## Step 2B: Orchestrated Execution
+## Step 3B: Orchestrated Execution
 
 1. **Classify by category + register domain tickets.** Decide which *categories* below the task actually needs (often 1–3; rarely all). Skip categories that do not apply. For each category identified, create a Weave ticket that the step-level tasks will depend on:
    ```bash
@@ -124,7 +112,7 @@ bash -c 'echo "main" > "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.lena-hat"'
 
    | Pattern | Use when | Key trait |
    |---------|----------|-----------|
-   | **Router** | Single domain, one agent sufficient | Go to Step 2A instead — no spawning |
+   | **Router** | Single domain, one agent sufficient | Go to Step 3A instead — no spawning |
    | **Pipeline** | Steps fixed, ordered, each feeds the next | Sequential; output of N is input to N+1 via Weave |
    | **Parallel** | 2+ steps with zero inter-dependencies | Run simultaneously; aggregator merges |
    | **Feedback Loop** | Output quality critical | Generator + Critic loop until threshold met |
@@ -205,7 +193,7 @@ These agents ship with LENA and know the harness internals. Invoke them by name.
 | `weave-planner` | `weave-planner` | Before `wv create` commands when task is complex, ambiguous, or uses Plan Then Execute / Hierarchical pattern · whenever upfront graph design prevents mid-run pivots |
 
 **weave-planner invocation triggers:**
-- Step 2B step 5 when the decomposition has 4+ steps or non-obvious dependency edges
+- Step 3B step 5 when the decomposition has 4+ steps or non-obvious dependency edges
 - Any time `Plan Then Execute` or `Hierarchical` pattern is selected
 - When a prior run failed due to bad graph wiring → re-plan before re-executing
 
@@ -223,7 +211,7 @@ LENA uses four infrastructure tools across the harness layers. Each has a define
 **What it is:** JSON-backed execution graph. Tasks are nodes, `depends_on` are directed edges. Outputs from done steps flow as `input` to the next ready step automatically — no manual context wiring.
 
 **When to invoke:**
-- Any Step 2B orchestrated execution with 2+ sub-agent steps
+- Any Step 3B orchestrated execution with 2+ sub-agent steps
 - When steps produce outputs that downstream steps need as input
 - When the user asks to track, inspect, or resume orchestrated work
 
@@ -303,11 +291,12 @@ ctx_knowledge(action="consolidate")   # extract session findings into persistent
 ctx_session(action="save")            # persist session state for next run
 ```
 
-#### Session start — restore context (Step 0)
+#### Session start — restore context (Step 1)
 
 ```python
 ctx_session(action="load")        # ~400 tok, prior task/decisions/findings
 ctx_knowledge(action="wakeup")    # compact AAAK project briefing
+ctx_overview(task=<task>)         # task-scoped project map
 ```
 
 #### Recall mid-session
@@ -341,7 +330,7 @@ if not result or head not in result:
 **Layer:** Context & Memory (in-session, window management)
 
 **When to invoke:**
-- Automatically, on every orchestrated execution (Step 2B): pass the current compressed context to each sub-agent prompt rather than raw conversation history.
+- Automatically, on every orchestrated execution (Step 3B): pass the current compressed context to each sub-agent prompt rather than raw conversation history.
 - When context window pressure is detected (long thread, many tool calls): compress and summarize prior turns before the next LLM call.
 - When switching agent roles mid-task: trim irrelevant prior context, retain only what the next role needs.
 
@@ -464,7 +453,7 @@ Then wait for the task. If they already put the task in the same message as `/le
 ### Later turns while LENA is on
 
 - Do **not** repeat the **LENA active** line on every message.
-- Run **Step 1** (classify) on each new request, then direct or orchestrate as usual.
+- Run **Step 2** (classify) on each new request, then direct or orchestrate as usual.
 
 ### Opt out
 
@@ -477,7 +466,7 @@ Phrases like **`stop lena`**, **`exit lena`**, or **`lena off`** end LENA mode f
 
 ### Session start — prior context
 
-Run Step 0 immediately at session start: `ctx_session(load)` + `ctx_knowledge(wakeup)`. This restores prior session state and injects a compact project briefing. No wiki or separate agent call needed.
+Run Step 1 immediately at session start: `ctx_session(load)` + `ctx_knowledge(wakeup)` + `ctx_overview(task)`. Restores prior session state, injects project briefing, scopes project map to current task. No separate agent call needed.
 
 ### Claude Code plugin note
 
