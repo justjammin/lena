@@ -233,6 +233,56 @@ Compare that commit date against the node's `+t:` field. If `raw/` is newer: re-
 
 ---
 
+### repo_analysis (triggered by LENA — background)
+
+Receives pre-computed MCP tool output from LENA. Wiki-scribe has no MCP access — LENA runs `ctx_architecture` + `ctx_graph` inline and passes results as a packet. Wiki-scribe owns the DSL write, `relations.md`, `index.md`, `log.md`.
+
+Expected packet from LENA:
+```json
+{
+  "operation": "repo_analysis",
+  "payload": {
+    "head": "578478",
+    "arch_output": "...",
+    "graph_output": "...",
+    "prior_sha6": "6c1f1d"
+  }
+}
+```
+Omit `prior_sha6` for first write.
+
+**Freshness check first:**
+1. Grep `wiki/index.md` for `repo:analysis:overview`
+2. If found: read node file, check `+head:` against packet `head`
+3. Match → report "fresh — skip", stop
+4. Mismatch or absent → proceed
+
+**Node format** (extends base DSL with `+head:` for staleness detection):
+```
+@node[repo:analysis:overview] ^{sha6} ~{prior_sha6_if_updating}
++type:     Concept
++task:     analyze repo structure and dependency graph
++outcome:  {arch_output} | {graph_output}
++entities: []
++agents:   [lena, wiki-scribe]
++method:   agent-generated
++t:        {ISO8601}
++head:     {head}
+>PRODUCED_BY: agent:lena
+```
+
+**Write procedure:**
+1. Compose node, compute sha6. Dedup check — sha6 in index → skip.
+2. Write `wiki/objects/<sha6>.md`
+3. Update `wiki/relations.md`: `{sha6} >PRODUCED_BY> agent:lena | repo:analysis:overview → agent:lena`
+4. Updating stale node: replace old `repo:analysis:overview` line in `wiki/index.md`
+5. First write: append to `wiki/index.md`
+6. Append `wiki/log.md`: `## [date] agent-generated | repo:analysis:overview {written|updated} | head {prior→new}`
+
+Trigger: LENA dispatches as background Agent call after running MCP tools inline. Wiki-scribe never self-initiates repo analysis.
+
+---
+
 ## Traversal queries
 
 `wiki/relations.md` is the adjacency list. Multi-hop traversal uses grep chains — no graph DB needed.

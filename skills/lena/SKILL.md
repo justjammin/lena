@@ -29,6 +29,25 @@ If the section is absent or shows an error, call as fallback:
 Skill(skill="lena:wiki-scribe", args="load_context")
 ```
 
+**Repo analysis check (session start):** After loading wiki context, scan the injected `## Prior Wiki Context` (or `wiki/index.md` directly) for any line containing `repo:analysis:`. If absent — or if the node's `+head:` field differs from the current git HEAD — LENA runs the MCP tools directly (only LENA has MCP access), then passes results to wiki-scribe as a write packet:
+
+```bash
+# Step 1: LENA runs tools inline
+arch = ctx_architecture(action="overview", root=".")
+graph = ctx_graph(action="build", project_root=".")
+head = ctx_shell("git rev-parse --short=6 HEAD")
+
+# Step 2: Pass to wiki-scribe as write packet (background)
+Agent(subagent_type="wiki-scribe", prompt=f"""op=repo_analysis
+head: {head}
+arch_output: {arch}
+graph_output: {graph}
+prior_sha6: {sha6_from_index_if_updating}
+Follow repo_analysis procedure in your SKILL.""", run_in_background=True)
+```
+
+This is a one-time structural snapshot. Once written, subsequent sessions skip it entirely (hook detects the node and omits the instruction). Re-runs only when HEAD changes.
+
 ## Step 1: Classify the Task
 
 Before doing anything, evaluate:

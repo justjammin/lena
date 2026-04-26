@@ -1,5 +1,46 @@
 # Changelog
 
+## [v1.4.0] — 2026-04-26
+
+### What's new
+
+**Agent pool — automatic, always fresh**
+
+LENA now knows what agents are installed. At every session start, the hook scans `~/.claude/agents/`, `~/.cursor/agents/`, and the workspace equivalents, categorizes each agent into one of 14 routing categories, and injects a compact `## Available Agents` block into the session context. New or custom agents show up automatically — no manual SKILL.md editing required.
+
+The scan is mtime-based: it only re-runs when an agent file is newer than the cache, with a 14-day hard ceiling as a safety net. Cache lives at `~/.claude/.lena-agent-pool.json`. Custom agents not in the built-in list are flagged with `*` so LENA knows they're non-standard but valid dispatch targets.
+
+14 categories: Architecture, Implementation, Debugging, Code Review, Performance, Testing, Database, DevOps, Documentation, ML/AI, Mobile, Content/Writing, Research/Analysis, Enterprise/Domain, Orchestration.
+
+**Repo context at session start — zero MCP cost**
+
+The hook now injects lightweight git context on every session: last 3 commits, current branch and HEAD, working tree stat. Pure shell, ~5ms, no MCP round-trip.
+
+For deeper structural analysis, LENA follows a two-step amortized pattern: run `ctx_architecture` + `ctx_graph` once, write `@node[repo:analysis:overview]` to the wiki keyed by git HEAD. Every subsequent session sees the node and skips the analysis entirely. Re-runs only when HEAD changes.
+
+**`repo_analysis` operation in wiki-scribe**
+
+Wiki-scribe has a new operation. LENA runs the MCP tools (only LENA has MCP access), then dispatches wiki-scribe as a background agent with the raw output. Wiki-scribe owns the DSL write, `relations.md` edge, `index.md` entry, and `log.md` append. Freshness check first — if `+head:` matches current HEAD, skip with "fresh — skip". Lineage pointer set on update.
+
+**LENA Step 0 extended**
+
+After loading wiki context, LENA now checks for a `repo:analysis:` node. If absent or stale (HEAD mismatch), it runs `ctx_architecture` + `ctx_graph` inline and dispatches wiki-scribe to persist the result in the background before the first orchestrated step.
+
+### Files changed
+
+| File | What changed |
+|------|-------------|
+| `hooks/lena-activate.js` | Agent pool scan (mtime-cached, 14 categories, `*`-flagged custom agents). Lightweight git repo context. Wiki `repo:analysis:` check with LENA instruction when absent. |
+| `skills/lena/SKILL.md` | Step 0: repo analysis check — detect missing/stale node, run MCP tools inline, dispatch wiki-scribe as background write packet. |
+| `skills/wiki-scribe/SKILL.md` | New `repo_analysis` operation: receives LENA packet, freshness check, writes typed Concept node with `+head:`, updates `relations.md` + index + log. |
+| `agents/wiki-scribe.md` | Same `repo_analysis` operation added to agent definition. |
+
+### Upgrading
+
+Re-run `node install.js` or update the plugin. New sessions pick up the agent pool and repo context automatically. First session on a repo with no wiki triggers the one-time `ctx_architecture` + `ctx_graph` run; subsequent sessions are free.
+
+---
+
 ## [v1.3.0] — 2026-04-24
 
 ### What's new
