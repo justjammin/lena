@@ -6,14 +6,11 @@ const os = require('os');
 
 const SKILL_SRC              = path.join(__dirname, 'skills', 'lena', 'SKILL.md');
 const WEAVE_SKILL_SRC        = path.join(__dirname, 'skills', 'weave', 'SKILL.md');
-const WIKI_SCRIBE_SKILL_SRC  = path.join(__dirname, 'skills', 'wiki-scribe', 'SKILL.md');
 const CLAUDE_DIR                    = path.join(os.homedir(), '.claude');
 const CLAUDE_SKILLS_DIR             = path.join(CLAUDE_DIR, 'skills', 'lena');
 const WEAVE_CLAUDE_SKILLS_DIR       = path.join(CLAUDE_DIR, 'skills', 'weave');
-const WIKI_SCRIBE_CLAUDE_SKILLS_DIR = path.join(CLAUDE_DIR, 'skills', 'wiki-scribe');
 const SKILL_DEST             = path.join(CLAUDE_SKILLS_DIR, 'SKILL.md');
 const WEAVE_SKILL_DEST       = path.join(WEAVE_CLAUDE_SKILLS_DIR, 'SKILL.md');
-const WIKI_SCRIBE_SKILL_DEST = path.join(WIKI_SCRIBE_CLAUDE_SKILLS_DIR, 'SKILL.md');
 const SETTINGS_PATH    = path.join(CLAUDE_DIR, 'settings.json');
 const HOOKS_DIR         = path.join(CLAUDE_DIR, 'hooks');
 const ACTIVATE_SRC      = path.join(__dirname, 'hooks', 'lena-activate.js');
@@ -45,12 +42,6 @@ function install() {
     fs.mkdirSync(WEAVE_CLAUDE_SKILLS_DIR, { recursive: true });
   }
   fs.copyFileSync(WEAVE_SKILL_SRC, WEAVE_SKILL_DEST);
-
-  // Copy wiki-scribe skill
-  if (!fs.existsSync(WIKI_SCRIBE_CLAUDE_SKILLS_DIR)) {
-    fs.mkdirSync(WIKI_SCRIBE_CLAUDE_SKILLS_DIR, { recursive: true });
-  }
-  fs.copyFileSync(WIKI_SCRIBE_SKILL_SRC, WIKI_SCRIBE_SKILL_DEST);
 
   // Install wv CLI to ~/.local/bin
   if (!fs.existsSync(LOCAL_BIN)) {
@@ -106,7 +97,7 @@ function install() {
     });
     console.log('  Hook:  SessionStart → hooks/lena-activate.js');
   } else {
-    console.log('  Hook:  already registered (skipped)');
+    console.log('  Hook:  SessionStart already registered (skipped)');
   }
 
   // Register statusLine — set if empty, chain if already configured
@@ -132,7 +123,6 @@ function install() {
   console.log('');
   console.log('  Skill:  ~/.claude/skills/lena/SKILL.md');
   console.log('  Skill:  ~/.claude/skills/weave/SKILL.md');
-  console.log('  Skill:  ~/.claude/skills/wiki-scribe/SKILL.md');
   console.log('  CLI:    ~/.local/bin/wv');
   for (const file of agentFiles) {
     console.log(`  Agent:  ~/.claude/agents/${file}`);

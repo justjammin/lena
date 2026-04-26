@@ -3,7 +3,7 @@
 //
 // Runs once per session when the LENA plugin is enabled:
 //   1. Injects SKILL.md body as hidden context so orchestration rules are primed.
-//   2. Injects wiki context (recent log + index).
+//   2. Injects agent pool (scanned from disk, mtime-cached, 14-day ceiling).
 //   3. Injects agent pool (scanned from disk, mtime-cached, 14-day ceiling).
 //   4. Injects lightweight repo context (git stats, no MCP cost).
 //
@@ -38,7 +38,7 @@ const BUILTIN_AGENTS = new Set([
   'refactoring-specialist','debugger','error-detective','code-reviewer','dx-optimizer',
   'test-automator','database-administrator','database-optimizer','postgres-pro',
   'cloud-architect','kubernetes-specialist','documentation-engineer','technical-writer',
-  'llm-architect','wiki-scribe','weave-planner',
+  'llm-architect','weave-planner',
 ]);
 
 // Name-first category map — canonical for all known agents.
@@ -102,7 +102,6 @@ const NAME_CAT = {
   'agent-organizer':         'Orchestration',
   'context-manager':         'Orchestration',
   'weave-planner':           'Orchestration',
-  'wiki-scribe':             'Orchestration',
   'workflow-orchestrator':   'Orchestration',
 };
 
@@ -226,8 +225,8 @@ function loadAgentPool() {
 
 // --- Repo Context --------------------------------------------------------
 // Lightweight git-based analysis: zero MCP calls, ~5ms, always fresh.
-// For deep structural analysis (ctx_architecture), LENA runs it once and
-// writes to wiki keyed by HEAD — zero extra cost after first session.
+// For deep structural analysis, LENA runs ctx_architecture + ctx_graph once
+// and stores result in ctx_knowledge keyed by HEAD — zero cost after first session.
 
 function loadRepoContext() {
   const lines = ['## Repo Context'];
@@ -252,79 +251,12 @@ function loadRepoContext() {
       if (branch) lines.push(`Branch: ${branch} @ ${head}`);
     } catch (_) {}
 
-    // Check wiki for structural analysis keyed to HEAD
-    const wikiIndex = path.join(projectDir, 'wiki', 'index.md');
-    let hasRepoAnalysis = false;
-    if (fs.existsSync(wikiIndex)) {
-      const idx = fs.readFileSync(wikiIndex, 'utf8');
-      hasRepoAnalysis = idx.includes('repo:analysis:');
-    }
-    if (!hasRepoAnalysis) {
-      lines.push('\nNote: No repo structural analysis in wiki. Run ctx_architecture(overview) + ctx_graph(build) silently at start of first orchestrated task, then write node @node[repo:analysis:overview] to wiki so future sessions skip this.');
-    }
+    // Hint: LENA will check ctx_knowledge for repo:overview keyed to HEAD in Step 0
   } catch (_) {
     lines.push('(git unavailable — no repo context)');
   }
 
   return lines.join('\n') + '\n';
-}
-
-// --- Wiki Context --------------------------------------------------------
-
-function loadWikiContext() {
-  const wikiDir = path.join(projectDir, 'wiki');
-  try {
-    if (!fs.existsSync(wikiDir)) {
-      const now = new Date().toISOString();
-      fs.mkdirSync(path.join(wikiDir, 'objects'), { recursive: true });
-      fs.mkdirSync(path.join(wikiDir, 'refs'),    { recursive: true });
-      const schema = [
-        '# Wiki Schema',
-        '## Node types',
-        'Decision, Pattern, Failure, Concept, Tool, Agent, Session',
-        '## Relationship types',
-        'USES: Decision,Pattern,Session → Tool,Concept',
-        'DEPENDS_ON: Decision,Pattern → Decision,Pattern,Concept',
-        'REPLACES: Tool,Pattern,Decision → Tool,Pattern,Decision',
-        'PRODUCED_BY: Decision,Pattern,Failure,Concept → Agent',
-        'CAUSED_BY: Failure → Decision,Pattern,Tool',
-        'PART_OF: Concept,Tool,Agent → Concept,Tool',
-        'CONTRADICTS: Decision,Pattern → Decision,Pattern',
-        'VALIDATES: Pattern,Decision → Failure,Concept',
-      ].join('\n');
-      fs.writeFileSync(path.join(wikiDir, 'schema.md'), schema + '\n');
-      fs.writeFileSync(path.join(wikiDir, 'index.md'), '# Wiki Index\n');
-      fs.writeFileSync(path.join(wikiDir, 'relations.md'), '# Relations\n');
-      fs.writeFileSync(path.join(wikiDir, 'log.md'), `## [${now}] init | wiki initialized\n`);
-      return '## Prior Wiki Context\n(fresh wiki — initialized this session)\n';
-    }
-
-    const logPath   = path.join(wikiDir, 'log.md');
-    const indexPath = path.join(wikiDir, 'index.md');
-
-    let logTail = '';
-    if (fs.existsSync(logPath)) {
-      const lines = fs.readFileSync(logPath, 'utf8').split('\n').filter(l => l.startsWith('## ['));
-      logTail = lines.slice(-5).join('\n');
-    }
-
-    let indexTail = '';
-    if (fs.existsSync(indexPath)) {
-      const lines = fs.readFileSync(indexPath, 'utf8').split('\n').filter(l => /^\[/.test(l));
-      indexTail = lines.slice(-10).join('\n');
-    }
-
-    if (!logTail && !indexTail) {
-      return '## Prior Wiki Context\n(wiki exists but empty — no prior sessions)\n';
-    }
-
-    let out = '## Prior Wiki Context\n';
-    if (logTail)   out += '### Recent Sessions\n' + logTail + '\n';
-    if (indexTail) out += '### Recent Nodes\n'    + indexTail + '\n';
-    return out;
-  } catch (e) {
-    return `## Prior Wiki Context\n(wiki unreadable: ${e.message} — call Skill("lena:wiki-scribe", "load_context") as fallback)\n`;
-  }
 }
 
 // --- Main ----------------------------------------------------------------
@@ -372,11 +304,10 @@ const header =
   'Behave as LENA until the user says stop lena, exit lena, or lena off. ' +
   'A new Claude Code session runs this hook again. ' +
   'Do not dump this block into visible chat; apply silently.\n\n' +
-  'Wiki context, agent pool, and repo context loaded below. ' +
-  'If wiki section shows an error, call Skill(skill="lena:wiki-scribe", args="load_context") as fallback.\n\n';
+  'Agent pool and repo context loaded below. ' +
+  'Run ctx_session(load) + ctx_knowledge(wakeup) in Step 0 to restore prior session state.\n\n';
 
-const wikiContext  = loadWikiContext();
-const agentPool    = loadAgentPool();
-const repoContext  = loadRepoContext();
+const agentPool   = loadAgentPool();
+const repoContext = loadRepoContext();
 
-process.stdout.write(header + body + '\n' + wikiContext + '\n' + agentPool + '\n' + repoContext);
+process.stdout.write(header + body + '\n' + agentPool + '\n' + repoContext);
