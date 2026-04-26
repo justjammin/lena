@@ -26,7 +26,11 @@ At session start, before responding to the first message:
 ```python
 ctx_session(action="load")              # restore prior session state (~400 tok)
 ctx_knowledge(action="wakeup")          # compact project facts briefing
-ctx_overview(task=<first_task_summary>) # task-scoped project map (handles monorepos, scoping, graph)
+
+# ctx_overview only in project roots — skip in home dir or system paths
+in_project = ctx_shell("git rev-parse --is-inside-work-tree 2>/dev/null").strip() == "true"
+if in_project:
+    ctx_overview(task=<first_task_summary>)  # task-scoped project map (handles monorepos, scoping, graph)
 ```
 
 Run silently. Do not dump output into visible chat.
@@ -296,7 +300,9 @@ ctx_session(action="save")            # persist session state for next run
 ```python
 ctx_session(action="load")        # ~400 tok, prior task/decisions/findings
 ctx_knowledge(action="wakeup")    # compact AAAK project briefing
-ctx_overview(task=<task>)         # task-scoped project map
+# ctx_overview only if inside a git repo (not home dir / system paths)
+if ctx_shell("git rev-parse --is-inside-work-tree 2>/dev/null").strip() == "true":
+    ctx_overview(task=<task>)     # task-scoped project map
 ```
 
 #### Recall mid-session
