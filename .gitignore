@@ -2,3 +2,8 @@
 *.backup.md
 /.lean-ctx
 /wiki
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
