@@ -1,14 +1,14 @@
 # LENA: AI Orchestrator
 
-You know that moment when you ask your AI for something small and it suddenly wants a committee? Or you ask for something huge and one tired generalist tries to do it all? That's the friction this skill is built to fix.
+Okay so this is the thing I've been building. You know that moment when you ask your AI for something small and it suddenly wants to spin up a committee? Or you throw something big at it and one tired generalist tries to carry the whole thing? Yeah. That's what LENA is built to fix.
 
-**L.E.N.A.** stands for Logical Execution & Navigation Assistant. LENA is a Claude Code skill that acts like a principal engineer who's picky about *how* work gets done. Before touching your task, LENA sorts it: quick solo work stays quick. Anything that's really a project gets broken up and handed to specialists who fit the job.
+**L.E.N.A.** — Logical Execution & Navigation Assistant. She's a Claude Code skill that thinks like a principal engineer: picky about *how* work gets done, not just whether it gets done. Quick task? She handles it and gets out of the way. Actually a project in disguise? She breaks it apart and hands each piece to whoever's actually built for it.
 
 ---
 
 ## What actually happens
 
-LENA runs a gate before every request:
+Every request hits a gate:
 
 ```
 Single task + one domain + clear requirements
@@ -20,21 +20,21 @@ Multiple steps OR multiple domains OR fuzzy requirements OR "build / refactor / 
 
 ### Direct work
 
-Straight paths don't need a parade. LENA handles them alone: fix the bug, write the helper, explain the file, generate tests. Fast, quiet, done.
+Simple paths don't need a parade. LENA handles them solo: fix the bug, write the helper, explain the file, generate tests. Fast, quiet, done.
 
 **Examples:** patch a known issue, draft a function, walk through code, generate tests.
 
 ### When LENA brings in backup
 
-Bigger work gets decomposed deliberately. Each chunk goes to whoever's built for it. Context passes forward so you're not re-explaining yourself three times.
+Bigger work gets decomposed deliberately — not dumped on one agent. Each chunk goes to whoever's actually built for it. Context passes forward so nobody's starting from scratch mid-chain.
 
-Steps with hard dependencies run in order. Steps with no inter-dependencies — testing + documentation after implementation, or security + code review on the same artifact — run concurrently when possible.
+Steps with hard dependencies run in order. Steps without — testing + documentation after implementation, security + code review on the same artifact — run concurrently.
 
 ---
 
 ## Who LENA can call
 
-LENA groups work into categories, then picks agents that fit. Most tasks only need a couple of lanes, not the whole roster. The runtime may not expose every agent type; LENA maps to what's available.
+She groups work into categories, picks the right agents, and only pulls in the lanes the task actually needs. The runtime may not expose every type; LENA maps to what's available.
 
 | Category | What it's for | Agents (typical) |
 |----------|---------------|-------------------|
@@ -54,7 +54,7 @@ LENA groups work into categories, then picks agents that fit. Most tasks only ne
 
 ## Adding custom agents for LENA to choose from
 
-LENA works well with VoltAgents subagents — worth pairing the two.
+LENA works great with VoltAgents subagents — honestly worth pairing them.
 
 Repo: [VoltAgent SubAgent Collection](https://github.com/VoltAgent/awesome-claude-code-subagents).
 
@@ -120,48 +120,50 @@ Docs: [Subagents (Claude Code)](https://docs.claude.com/en/docs/claude-code/suba
 
 ## Tool infrastructure
 
-LENA ships with four infrastructure layers: execution tracking, long-term memory, context management, and output compression. Each has a fallback — if a tool isn't available, LENA keeps going.
+Here's where it gets fun. LENA runs on four tools underneath — execution tracking, architecture graph queries, context management, and output compression. Each one has a fallback if it's not installed, so nothing breaks.
 
-### Weave — Execution graph
+### Beads — Execution tracking
 
-Weave is LENA's task tracking and execution layer. When a job splits into steps, each step gets registered in `.weave/` — a git-root-anchored JSON store — with a title, assigned agent role, priority, and dependency edges.
+Download [Beads](https://github.com/gastownhall/beads)
 
-The `wv` CLI manages the lifecycle:
+Beads is one of my favorites in this stack. It's a Dolt-backed graph issue tracker — task state that actually survives context compaction. When LENA splits a job into steps, every step gets a ticket before anything runs. Title, role, priority, dependency edges — all locked in upfront.
 
 ```bash
-wv init          # initialize at git root
-wv create "..."  # register a task
-wv ready         # claim next task; injects upstream outputs into input field
-wv done --output # close task; passes result downstream
-wv graph         # show dependency DAG
-wv stats         # task count by status
+bd init --quiet --stealth  # initialize at git root
+bd create "..." -t task    # register a task
+bd ready                   # claim next unblocked task
+bd update <id> --claim     # mark in-progress
+bd close <id>              # mark complete
+bd dep tree <id>           # show dependency graph
 ```
 
-The output propagation is the real feature. When Step 3 runs, it doesn't have to guess what Step 2 produced — `wv ready` injects the actual output blob. Context flows through the graph automatically.
+The thing I love about this: the hard rule is that no agent gets dispatched until every step is registered. LENA uses `bd ready` to find what's actually unblocked at each point, and `bd list --status open` to make sure nothing got silently dropped before wrapping up.
 
-**Fallback:** numbered checklist in the response, updated as steps complete.
+`bd prime` runs on SessionStart and PreCompact via Claude hooks — LENA always wakes up knowing what's live.
+
+**Fallback:** numbered checklist inline. Outputs noted as code blocks after each step.
 
 ---
 
-### Wiki Memory — Long-term memory
+### Graphify — Architecture graph
 
-Wiki Memory is a content-addressed file graph stored in `wiki/` at the project root. Nodes are written in a structured DSL:
+Download [Graphify](https://github.com/safishamsi/graphify)
 
+Okay this one is genuinely impressive. Graphify takes any folder of files — code, docs, papers, notes, whatever you've got — and builds a persistent knowledge graph from it. Community detection, a real audit trail, queryable relationships.
+
+LENA uses it when she needs to understand architecture or trace impact: what calls what, how concepts connect, which nodes are the real hubs. The graph lives across sessions. A query takes seconds instead of re-reading the whole codebase from scratch.
+
+```bash
+graphify <path>                        # build the graph
+graphify query "<question>"            # BFS traversal — broad context
+graphify query "<question>" --dfs      # DFS — trace a specific path
+graphify path "AuthModule" "Database"  # shortest path between two concepts
+graphify explain "NodeName"            # plain-language neighborhood
 ```
-@node[domain:subdomain:topic] ^{sha6} ~{parent_sha6}
-+task:    what was being solved
-+outcome: what was produced or decided
-+agents:  [role, role]
-+method:  manual|agent-generated
-+t:       ISO8601
->link:    related:node:address
-```
 
-Each node has a sha6 content hash and an optional `~parent` pointer for lineage. Same content → same hash → write skipped. The graph stays clean without manual dedup.
+Every edge gets tagged EXTRACTED, INFERRED, or AMBIGUOUS — so you know what was found versus what was guessed. It also exposes an MCP server (`--mcp`) so LENA can query the graph via tool calls when the server's configured. Key findings flow back into cross-session memory tagged `[graph:HEAD]`, so the next session doesn't have to re-query things we already know.
 
-At session start, LENA reads the last few log entries and loads relevant prior nodes. Mid-task, it writes decisions and outcomes. At session end, a summary node goes in so future sessions aren't starting cold.
-
-**Fallback:** one question at session start for prior context; `## Session Memory` block for in-session decisions; 3–5 bullet summary at end offered for manual save.
+**Fallback:** semantic search for meaning-based lookup when no graph exists.
 
 ---
 
@@ -169,7 +171,7 @@ At session start, LENA reads the last few log entries and loads relevant prior n
 
 Download [Lean CTX](https://github.com/yvgude/lean-ctx)
 
-Lean CTX compresses active context before each sub-agent call and injects a `## Context` block into the prompt. No raw conversation dumps — just the relevant state. Runs on every orchestrated step and when context window pressure rises.
+Lean CTX keeps the context window from turning into a disaster zone. Before each sub-agent call, it compresses active context and injects a clean `## Context` block into the prompt — no raw conversation dumps, just the relevant state. It also handles `ctx_knowledge` and `ctx_session`: cross-session memory for project facts, architectural decisions, and session findings that survive compaction and carry forward automatically.
 
 **Fallback:** manual context summary (task goal, decisions so far, current step, blockers) injected into each sub-agent prompt. Cap at 500 tokens per call.
 
@@ -179,7 +181,7 @@ Lean CTX compresses active context before each sub-agent call and injects a `## 
 
 Download [Caveman](https://github.com/JuliusBrussee/caveman)
 
-Caveman compresses LENA's own output at a configurable intensity level. LENA inherits whatever level is active — she doesn't override it if you've already set it.
+Caveman compresses LENA's output. Six levels — pick the intensity. LENA inherits whatever's already active and never overrides it.
 
 | Level | Behavior |
 |-------|----------|
@@ -198,13 +200,13 @@ Not compressed: code blocks, error messages, security warnings, destructive acti
 
 ### Tool availability check
 
-At the start of any orchestrated execution, LENA checks what's available:
+LENA checks what's actually installed at the start of any orchestrated run:
 
 | Tool | Available | Unavailable |
 |------|-----------|-------------|
-| Weave (`wv`) | Full execution graph, output propagation | Inline checklist |
-| Wiki Memory | Background batch writes, read-only session-start load | Session scratchpad + end summary |
-| Lean CTX | Compress per sub-agent call | Manual 500-token context block |
+| Beads (`bd`) | Full execution graph, dependency tracking | Inline numbered checklist |
+| Graphify | Graph queries, architecture + impact analysis | Semantic search fallback |
+| Lean CTX | Compress per sub-agent call; cross-session memory | Manual 500-token context block |
 | Caveman | Compress all human-facing output | Terse prose manually |
 
 ---
@@ -217,7 +219,7 @@ At the start of any orchestrated execution, LENA checks what's available:
 claude plugin add justjammin/lena
 ```
 
-The plugin registers a SessionStart hook that loads the LENA skill into hidden context on every new session. Routing rules apply from the first message until you say `stop lena`, `exit lena`, or `lena off`. `/lena` still works as an explicit trigger.
+This registers a SessionStart hook that loads the LENA skill into hidden context on every new session. Routing rules kick in from the first message until you say `stop lena`, `exit lena`, or `lena off`. `/lena` still works as an explicit trigger.
 
 ### npx
 

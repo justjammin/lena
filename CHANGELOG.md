@@ -1,5 +1,85 @@
 # Changelog
 
+## [v1.5.0] — 2026-04-27
+
+### What's new
+
+**Back to Beads — and it's the right call**
+
+v1.3.0 replaced Beads with Weave. That's now reversed. Beads is back as the execution tracking layer, properly wired into the orchestration loop this time: `bd create` before decomposition, `bd update --claim` before each agent dispatch, `bd close` after, `bd ready` to find what's unblocked next. The hard gate in Step 5 of the execution loop holds: no agent call until `bd list --status open` confirms every step is registered.
+
+`bd prime` runs on SessionStart and PreCompact via Claude Code hooks, so LENA wakes up knowing what work is live even after compaction.
+
+**SKILL.md went from 483 lines to 145**
+
+The single monolithic skill file is now a navigation hub. Everything that isn't core routing logic lives in domain-specific subdirectories loaded on demand — progressive disclosure so the always-loaded context stays tight:
+
+```
+skills/lena/
+  SKILL.md                        ← always loaded (~145 lines)
+  routing/
+    routing.md                    ← agent categories + subagent_type values
+    task-classification.md        ← edge cases, scope expansion, Router pattern
+  memory/
+    ctx_knowledge.md              ← full ctx_knowledge API
+    ctx_session.md                ← ctx_session API + when vs ctx_knowledge
+    consolidation.md              ← end-of-session consolidation protocol
+  orchestration/
+    workflows.md                  ← 8 execution patterns + parallel dispatch rules
+    agent-handoffs.md             ← 7-step execution loop with excellence gate
+    beads.md                      ← Beads orchestration pattern + fallback
+  query/
+    graphify.md                   ← when + how LENA queries the graph
+```
+
+**Graphify for architecture and impact analysis**
+
+Graphify is now the graph query layer. LENA uses it when `ctx_knowledge` doesn't have the answer: what calls what, how concepts connect, which nodes are hubs, what might break if X changes. The new `query/graphify.md` reference documents when to trigger a query, which mode to use (BFS/DFS/path/explain), and how to write durable findings back to `ctx_knowledge` tagged `[graph:HEAD]` so future sessions are free.
+
+Graphify's MCP server (`--mcp`) means LENA can query the graph with tool calls when the server is configured, not just shell commands.
+
+**Knowledge System Rules formalized**
+
+Five explicit rules now live at the top of SKILL.md:
+
+| System | Purpose | When |
+|--------|---------|------|
+| `ctx_knowledge` | Reusable facts, patterns, gotchas | Any project-specific insight |
+| `ctx_session` | Decisions + findings this run | Track what happened this session |
+| `bd` (Beads) | Workflow tracking, task state | Every orchestrated task |
+| Graph tools | Relationships between entities | Architecture + impact analysis |
+| `ctx_preload` | Pre-fetch only relevant context | Before each step |
+
+**Never duplicate knowledge across systems. One source of truth per fact.**
+
+**weave-planner removed**
+
+The harness-native weave-planner agent is gone. Step 4B now belongs to LENA: write out the complete execution plan inline (title, category, agent, dependencies), verify every dep edge before `bd create` commands, no external agent needed.
+
+### Files changed
+
+| File | What changed |
+|------|-------------|
+| `skills/lena/SKILL.md` | Compressed 483 → 145 lines; Knowledge System Rules; Step 3B pointers to subdirs; Step 2 classification table |
+| `skills/lena/routing/routing.md` | Agent categories table; removed Harness-Native Agents section (weave-planner gone) |
+| `skills/lena/routing/task-classification.md` | Edge cases, scope expansion, Router pattern explanation |
+| `skills/lena/memory/ctx_knowledge.md` | Full ctx_knowledge API: remember/recall/pattern/gotcha/consolidate |
+| `skills/lena/memory/ctx_session.md` | Session API + when-to-use vs ctx_knowledge comparison |
+| `skills/lena/memory/consolidation.md` | Consolidation protocol; graph findings added to Keep list |
+| `skills/lena/orchestration/workflows.md` | 8 execution patterns; Step 4B rewritten — LENA does inline decomposition |
+| `skills/lena/orchestration/agent-handoffs.md` | 7-step loop with Beads commands; Step 4B cross-ref updated |
+| `skills/lena/orchestration/beads.md` | Full Beads pattern; output propagation; fallback |
+| `skills/lena/query/graphify.md` | **New** — when + how LENA uses Graphify for graph queries |
+| `hooks/lena-activate.js` | Removed weave-planner from BUILTIN_AGENTS + NAME_CAT |
+| `install.js` | Guard agents/ dir existence; removed stale agentFiles log loop |
+| `README.md` | Tool infrastructure: Weave → Beads, Wiki Memory → Graphify |
+
+### Upgrading
+
+Re-run `node install.js` or update the plugin. Run `bd setup claude` in any project that uses Beads to wire the SessionStart and PreCompact hooks. Run `/graphify <path>` in a project to build the graph before LENA will use it.
+
+---
+
 ## [v1.4.0] — 2026-04-26
 
 ### What's new
