@@ -38,7 +38,7 @@ const BUILTIN_AGENTS = new Set([
   'refactoring-specialist','debugger','error-detective','code-reviewer','dx-optimizer',
   'test-automator','database-administrator','database-optimizer','postgres-pro',
   'cloud-architect','kubernetes-specialist','documentation-engineer','technical-writer',
-  'llm-architect','weave-planner',
+  'llm-architect',
 ]);
 
 // Name-first category map — canonical for all known agents.
@@ -101,7 +101,6 @@ const NAME_CAT = {
   'iot-engineer':            'Enterprise/Domain',
   'agent-organizer':         'Orchestration',
   'context-manager':         'Orchestration',
-  'weave-planner':           'Orchestration',
   'workflow-orchestrator':   'Orchestration',
 };
 

@@ -7,3 +7,6 @@
 .dolt/
 *.db
 .beads-credential-key
+/.beads
+*.original.md
+
