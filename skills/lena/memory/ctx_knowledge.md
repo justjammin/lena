@@ -11,7 +11,7 @@ ctx_knowledge(action="remember", category="architecture",
 
 # Convention or pattern
 ctx_knowledge(action="pattern", key="pipeline-decomp",
-              value="Use weave-planner for 4+ step graphs with dependency edges",
+              value="Use bd create for 4+ step graphs with dependency edges",
               pattern_type="structure")
 
 # Gotcha — prevent repeating mistakes
