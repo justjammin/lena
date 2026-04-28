@@ -237,6 +237,14 @@ curl -o ~/.claude/skills/lena/SKILL.md \
 
 Manual install is skill only — no SessionStart hook. Use `/lena` each thread.
 
+### Uninstall
+
+```bash
+node uninstall.js
+```
+
+Removes the skill, hook scripts, and cleans LENA's entries from `~/.claude/settings.json`. Restart Claude Code after.
+
 ---
 
 ## Usage
