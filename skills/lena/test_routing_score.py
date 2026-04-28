@@ -41,13 +41,13 @@ class TestHatLine:
         assert _hat_line("direct", 82, False) == "→ specialist [conf: 82%]"
 
     def test_team_high_conf(self):
-        assert _hat_line("orchestrate", 75, False) == "→ team [conf: 75%]"
+        assert _hat_line("orchestrate", 75, False, executor="team") == "→ team [conf: 75%]"
 
     def test_asterisk_at_69(self):
         assert _hat_line("direct", 69, False) == "→ specialist [conf: 69%*]"
 
     def test_asterisk_at_50(self):
-        assert _hat_line("orchestrate", 50, False) == "→ team [conf: 50%*]"
+        assert _hat_line("orchestrate", 50, False, executor="team") == "→ team [conf: 50%*]"
 
     def test_no_asterisk_at_70(self):
         assert "*" not in _hat_line("direct", 70, False)

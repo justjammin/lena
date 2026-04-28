@@ -35,6 +35,71 @@ def _find(pattern: str, text: str) -> list[str]:
     return re.findall(pattern, text, re.IGNORECASE)
 
 
+def _suggest_role(task: str, domains: list[str], imp_verbs: set[str]) -> str:
+    t = task.lower()
+
+    # Error/exception signals — check before generic debug
+    if re.search(r"\b(typeerror|valueerror|exception|traceback|stack trace|500|undefined is not|cannot read)\b", t):
+        if re.search(r"\b(correlate|across service|pattern|root cause.*multiple)\b", t):
+            return "error-detective"
+        return "debugger"
+
+    if "debug" in imp_verbs or re.search(r"\b(bug|broken|not working|failing|error|crash)\b", t):
+        return "debugger"
+
+    # Code quality
+    if re.search(r"\b(security review|vulnerability|owasp|injection|xss|csrf)\b", t):
+        return "code-reviewer"
+
+    if re.search(r"\b(review|audit|code review|second opinion)\b", t):
+        return "code-reviewer"
+
+    if "refactor" in imp_verbs:
+        return "refactoring-specialist"
+
+    # Architecture/design
+    if re.search(r"\b(architect|system design|diagram|pattern|trade.?off|adr)\b", t):
+        return "architect-reviewer"
+
+    # Testing
+    if "test" in imp_verbs or re.search(r"\b(spec|unit test|integration test|e2e|test coverage)\b", t):
+        return "test-automator"
+
+    # ML/AI
+    if "ml" in domains:
+        return "ml-engineer"
+
+    # Database
+    if "database" in domains and "backend" not in domains:
+        return "database-optimizer"
+
+    # DevOps/infra
+    if "devops" in domains:
+        return "cloud-architect"
+
+    # Frontend only
+    if "frontend" in domains and "backend" not in domains:
+        return "frontend-developer"
+
+    # Both → fullstack
+    if "frontend" in domains and "backend" in domains:
+        return "fullstack-developer"
+
+    # Backend only
+    if "backend" in domains:
+        return "backend-developer"
+
+    # Docs/writing
+    if "write" in imp_verbs or re.search(r"\b(document|docs|readme|guide|tutorial)\b", t):
+        return "technical-writer"
+
+    # Analysis/explain
+    if re.search(r"\b(explain|analyze|why|how does|what is|describe)\b", t):
+        return "architect-reviewer"
+
+    return "backend-developer"
+
+
 def score_task(task: str) -> dict:
     t = task.lower()
     cats: dict[str, CategoryScore] = {
@@ -86,14 +151,14 @@ def score_task(task: str) -> dict:
         "security": r"\b(auth|oauth|jwt|permission|role|acl|encrypt|decrypt|credential|secret|\bcert\b)\b",
         "ml":       r"\b(model|training|inference|embedding|\bllm\b|fine.?tun|rag|vector|neural|dataset)\b",
     }
-    hit = [d for d, p in domain_patterns.items() if re.search(p, t)]
+    domains = [d for d, p in domain_patterns.items() if re.search(p, t)]
 
-    if len(hit) >= 3:
-        db.add_orchestration(4, f"3+ domains: {hit}")
-    elif len(hit) == 2:
-        db.add_orchestration(2, f"2 domains: {hit}")
-    elif len(hit) == 1:
-        db.add_direct(2, f"single domain: {hit}")
+    if len(domains) >= 3:
+        db.add_orchestration(4, f"3+ domains: {domains}")
+    elif len(domains) == 2:
+        db.add_orchestration(2, f"2 domains: {domains}")
+    elif len(domains) == 1:
+        db.add_direct(2, f"single domain: {domains}")
     else:
         db.add_direct(1, "no domain terms — meta/conversational")
 
@@ -199,6 +264,20 @@ def score_task(task: str) -> dict:
         routing = "orchestrate"  # tie → safer default
         action = "clarify_or_orchestrate"
 
+    suggested_role = _suggest_role(task, domains, imp_verbs) if routing == "direct" else None
+
+    # executor: who actually runs the work
+    # "self"  — LENA wears the hat (clear scope, single domain, or file-anchored)
+    # "agent" — spawn a specialist agent (direct but genuinely cross-domain, no file anchor)
+    # "team"  — orchestrate multiple agents
+    has_file_anchor = bool(re.search(r"[\w/\-]+\.\w{2,5}", task))
+    if routing == "orchestrate":
+        executor = "team"
+    elif routing == "direct" and len(domains) >= 3 and not has_file_anchor:
+        executor = "agent"  # 3+ domains, no file anchor → delegate to specialist
+    else:
+        executor = "self"
+
     return {
         "routing": routing,
         "confidence": confidence,
@@ -207,7 +286,13 @@ def score_task(task: str) -> dict:
         "total_orchestrate": total_o,
         "risk_override": risk_override,
         "action": action,
-        "hat_line": _hat_line(routing, confidence, risk_override),
+        "suggested_role": suggested_role,
+        "executor": executor,
+        "hat_line": _hat_line(routing, confidence, risk_override, suggested_role, executor),
+        "step3a_prompt": (
+            f"Act as {suggested_role}. Claim bd ticket, write '{suggested_role}' to .lena-hat, execute."
+            if executor == "self" and suggested_role else None
+        ),
         "breakdown": {
             cat: {
                 "direct": c.direct,
@@ -227,22 +312,29 @@ def _action(confidence: int) -> str:
     return "clarify_or_orchestrate"
 
 
-def _hat_line(routing: str, confidence: int, override: bool) -> str:
+def _hat_line(routing: str, confidence: int, override: bool, role: str | None = None, executor: str = "self") -> str:
     if override:
         return "→ team [risk-override]"
     suffix = "*" if confidence < 70 else ""
-    role = "team" if routing == "orchestrate" else "specialist"
-    return f"→ {role} [conf: {confidence}%{suffix}]"
+    if executor == "team":
+        display = "team"
+    elif executor == "agent":
+        display = f"agent:{role or 'specialist'}"
+    else:
+        display = role or "specialist"
+    return f"→ {display} [conf: {confidence}%{suffix}]"
 
 
 def _verbose(result: dict) -> str:
     lines = [
-        f"routing   : {result['routing']}",
-        f"confidence: {result['confidence']}%",
-        f"net score : {result['net_score']} "
+        f"routing      : {result['routing']}",
+        f"confidence   : {result['confidence']}%",
+        f"net score    : {result['net_score']} "
         f"(D={result['total_direct']} O={result['total_orchestrate']})",
-        f"action    : {result['action']}",
-        f"hat line  : {result['hat_line']}",
+        f"action       : {result['action']}",
+        f"suggested role: {result['suggested_role']}",
+        f"hat line     : {result['hat_line']}",
+        f"step3a prompt: {result['step3a_prompt']}",
         "",
         "breakdown:",
     ]
