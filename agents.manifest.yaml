@@ -1,0 +1,42 @@
+version: 1
+agents:
+  backend:
+    - name: backend-developer
+      path: .claude/agents/backend-developer.md
+      tools: [Read, Edit, Write, Bash]
+      model: gpt-5.5
+  database:
+    - name: database-optimizer
+      path: .claude/agents/database-optimizer.md
+      tools: [Read, Bash, Grep]
+      model: gpt-5.5
+  architecture:
+    - name: architect-reviewer
+      path: .claude/agents/architect-reviewer.md
+      tools: [Read, Grep, Glob]
+      model: gpt-5.5
+  testing:
+    - name: test-automator
+      path: .claude/agents/test-automator.md
+      tools: [Read, Edit, Write, Bash]
+      model: gpt-5.5
+  code-review:
+    - name: code-reviewer
+      path: .claude/agents/code-reviewer.md
+      tools: [Read, Grep]
+      model: gpt-5.5
+  frontend:
+    - name: frontend-developer
+      path: .claude/agents/frontend-developer.md
+      tools: [Read, Edit, Write, Bash]
+      model: gpt-5.5
+  devops:
+    - name: devops-engineer
+      path: .claude/agents/devops-engineer.md
+      tools: [Read, Edit, Write, Bash]
+      model: gpt-5.5
+  documentation:
+    - name: technical-writer
+      path: .claude/agents/technical-writer.md
+      tools: [Read, Write]
+      model: ollama/llama3

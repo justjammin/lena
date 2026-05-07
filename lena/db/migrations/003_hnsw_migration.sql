@@ -1,0 +1,10 @@
+-- FUTURE: Switch from ivfflat to HNSW when lena_team_memory > 100k rows
+-- HNSW: better recall at scale, no need to set probes, but higher memory at build time
+-- Run with maintenance_work_mem = '1GB'
+--
+-- BEGIN;
+-- CREATE INDEX CONCURRENTLY idx_team_mem_hnsw
+--   ON lena_team_memory USING hnsw (embedding vector_cosine_ops)
+--   WITH (m = 16, ef_construction = 64);
+-- DROP INDEX idx_team_mem_embedding;  -- old ivfflat
+-- COMMIT;

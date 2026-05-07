@@ -1,0 +1,112 @@
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL with pgvector
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: lena
+      POSTGRES_USER: lena
+      POSTGRES_PASSWORD: ${LENA_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./lena/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lena"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - lena-net
+
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - lena-net
+
+  # ---------------------------------------------------------------------------
+  # Zep — long-term memory service
+  # ---------------------------------------------------------------------------
+  zep:
+    image: ghcr.io/getzep/zep:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      ZEP_STORE_POSTGRES_DSN: postgresql://lena:${LENA_DB_PASSWORD}@postgres:5432/zep
+      ZEP_AUTH_SECRET: ${ZEP_AUTH_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lena-net
+
+  # ---------------------------------------------------------------------------
+  # Langfuse — LLM observability
+  # ---------------------------------------------------------------------------
+  langfuse-web:
+    image: langfuse/langfuse:2
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://lena:${LENA_DB_PASSWORD}@postgres:5432/langfuse
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - lena-net
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://lena:${LENA_DB_PASSWORD}@postgres:5432/langfuse
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+    depends_on:
+      langfuse-web:
+        condition: service_started
+    networks:
+      - lena-net
+
+# ---------------------------------------------------------------------------
+# Volumes & networks
+# ---------------------------------------------------------------------------
+volumes:
+  pgdata:
+
+networks:
+  lena-net:
+    driver: bridge

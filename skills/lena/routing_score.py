@@ -35,71 +35,6 @@ def _find(pattern: str, text: str) -> list[str]:
     return re.findall(pattern, text, re.IGNORECASE)
 
 
-def _suggest_role(task: str, domains: list[str], imp_verbs: set[str]) -> str:
-    t = task.lower()
-
-    # Error/exception signals — check before generic debug
-    if re.search(r"\b(typeerror|valueerror|exception|traceback|stack trace|500|undefined is not|cannot read)\b", t):
-        if re.search(r"\b(correlate|across service|pattern|root cause.*multiple)\b", t):
-            return "error-detective"
-        return "debugger"
-
-    if "debug" in imp_verbs or re.search(r"\b(bug|broken|not working|failing|error|crash)\b", t):
-        return "debugger"
-
-    # Code quality
-    if re.search(r"\b(security review|vulnerability|owasp|injection|xss|csrf)\b", t):
-        return "code-reviewer"
-
-    if re.search(r"\b(review|audit|code review|second opinion)\b", t):
-        return "code-reviewer"
-
-    if "refactor" in imp_verbs:
-        return "refactoring-specialist"
-
-    # Architecture/design
-    if re.search(r"\b(architect|system design|diagram|pattern|trade.?off|adr)\b", t):
-        return "architect-reviewer"
-
-    # Testing
-    if "test" in imp_verbs or re.search(r"\b(spec|unit test|integration test|e2e|test coverage)\b", t):
-        return "test-automator"
-
-    # ML/AI
-    if "ml" in domains:
-        return "ml-engineer"
-
-    # Database
-    if "database" in domains and "backend" not in domains:
-        return "database-optimizer"
-
-    # DevOps/infra
-    if "devops" in domains:
-        return "cloud-architect"
-
-    # Frontend only
-    if "frontend" in domains and "backend" not in domains:
-        return "frontend-developer"
-
-    # Both → fullstack
-    if "frontend" in domains and "backend" in domains:
-        return "fullstack-developer"
-
-    # Backend only
-    if "backend" in domains:
-        return "backend-developer"
-
-    # Docs/writing
-    if "write" in imp_verbs or re.search(r"\b(document|docs|readme|guide|tutorial)\b", t):
-        return "technical-writer"
-
-    # Analysis/explain
-    if re.search(r"\b(explain|analyze|why|how does|what is|describe)\b", t):
-        return "architect-reviewer"
-
-    return "backend-developer"
-
-
 def score_task(task: str) -> dict:
     t = task.lower()
     cats: dict[str, CategoryScore] = {
@@ -151,14 +86,14 @@ def score_task(task: str) -> dict:
         "security": r"\b(auth|oauth|jwt|permission|role|acl|encrypt|decrypt|credential|secret|\bcert\b)\b",
         "ml":       r"\b(model|training|inference|embedding|\bllm\b|fine.?tun|rag|vector|neural|dataset)\b",
     }
-    domains = [d for d, p in domain_patterns.items() if re.search(p, t)]
+    hit = [d for d, p in domain_patterns.items() if re.search(p, t)]
 
-    if len(domains) >= 3:
-        db.add_orchestration(4, f"3+ domains: {domains}")
-    elif len(domains) == 2:
-        db.add_orchestration(2, f"2 domains: {domains}")
-    elif len(domains) == 1:
-        db.add_direct(2, f"single domain: {domains}")
+    if len(hit) >= 3:
+        db.add_orchestration(4, f"3+ domains: {hit}")
+    elif len(hit) == 2:
+        db.add_orchestration(2, f"2 domains: {hit}")
+    elif len(hit) == 1:
+        db.add_direct(2, f"single domain: {hit}")
     else:
         db.add_direct(1, "no domain terms — meta/conversational")
 
@@ -264,20 +199,6 @@ def score_task(task: str) -> dict:
         routing = "orchestrate"  # tie → safer default
         action = "clarify_or_orchestrate"
 
-    suggested_role = _suggest_role(task, domains, imp_verbs) if routing == "direct" else None
-
-    # executor: who actually runs the work
-    # "self"  — LENA wears the hat (clear scope, single domain, or file-anchored)
-    # "agent" — spawn a specialist agent (direct but genuinely cross-domain, no file anchor)
-    # "team"  — orchestrate multiple agents
-    has_file_anchor = bool(re.search(r"[\w/\-]+\.\w{2,5}", task))
-    if routing == "orchestrate":
-        executor = "team"
-    elif routing == "direct" and len(domains) >= 3 and not has_file_anchor:
-        executor = "agent"  # 3+ domains, no file anchor → delegate to specialist
-    else:
-        executor = "self"
-
     return {
         "routing": routing,
         "confidence": confidence,
@@ -286,13 +207,8 @@ def score_task(task: str) -> dict:
         "total_orchestrate": total_o,
         "risk_override": risk_override,
         "action": action,
-        "suggested_role": suggested_role,
-        "executor": executor,
-        "hat_line": _hat_line(routing, confidence, risk_override, suggested_role, executor),
-        "step3a_prompt": (
-            f"Act as {suggested_role}. Claim bd ticket, write '{suggested_role}' to .lena-hat, execute."
-            if executor == "self" and suggested_role else None
-        ),
+        "hat_line": _hat_line(routing, confidence, risk_override),
+        "domains": hit,
         "breakdown": {
             cat: {
                 "direct": c.direct,
@@ -312,29 +228,22 @@ def _action(confidence: int) -> str:
     return "clarify_or_orchestrate"
 
 
-def _hat_line(routing: str, confidence: int, override: bool, role: str | None = None, executor: str = "self") -> str:
+def _hat_line(routing: str, confidence: int, override: bool) -> str:
     if override:
         return "→ team [risk-override]"
     suffix = "*" if confidence < 70 else ""
-    if executor == "team":
-        display = "team"
-    elif executor == "agent":
-        display = f"agent:{role or 'specialist'}"
-    else:
-        display = role or "specialist"
-    return f"→ {display} [conf: {confidence}%{suffix}]"
+    role = "team" if routing == "orchestrate" else "specialist"
+    return f"→ {role} [conf: {confidence}%{suffix}]"
 
 
 def _verbose(result: dict) -> str:
     lines = [
-        f"routing      : {result['routing']}",
-        f"confidence   : {result['confidence']}%",
-        f"net score    : {result['net_score']} "
+        f"routing   : {result['routing']}",
+        f"confidence: {result['confidence']}%",
+        f"net score : {result['net_score']} "
         f"(D={result['total_direct']} O={result['total_orchestrate']})",
-        f"action       : {result['action']}",
-        f"suggested role: {result['suggested_role']}",
-        f"hat line     : {result['hat_line']}",
-        f"step3a prompt: {result['step3a_prompt']}",
+        f"action    : {result['action']}",
+        f"hat line  : {result['hat_line']}",
         "",
         "breakdown:",
     ]
@@ -347,17 +256,31 @@ def _verbose(result: dict) -> str:
 
 
 if __name__ == "__main__":
-    verbose = "--verbose" in sys.argv or "-v" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--verbose", "-v")]
+    import argparse
 
-    task_text = " ".join(args) if args else sys.stdin.read().strip()
+    parser = argparse.ArgumentParser(description="LENA routing confidence scorer")
+    parser.add_argument("--task", dest="task", default=None, help="Task text to score")
+    parser.add_argument("--json", dest="force_json", action="store_true", help="Force JSON output")
+    parser.add_argument("--verbose", "-v", dest="verbose", action="store_true")
+    # Accept positional args for backwards-compat: routing_score.py "task text here"
+    parser.add_argument("positional", nargs="*")
+    parsed = parser.parse_args()
+
+    verbose = parsed.verbose
+    if parsed.task:
+        task_text = parsed.task
+    elif parsed.positional:
+        task_text = " ".join(parsed.positional)
+    else:
+        task_text = sys.stdin.read().strip()
+
     if not task_text:
         print(json.dumps({"error": "no task text provided"}))
         sys.exit(1)
 
     result = score_task(task_text)
 
-    if verbose:
+    if verbose and not parsed.force_json:
         print(_verbose(result))
     else:
         print(json.dumps(result, indent=2))

@@ -1,330 +1,398 @@
-# LENA: AI Orchestrator
+# LENA
 
-Okay so this is the thing I've been building. You know that moment when you ask your AI for something small and it suddenly wants to spin up a committee? Or you throw something big at it and one tired generalist tries to carry the whole thing? Yeah. That's what LENA is built to fix.
+**LangGraph-powered, model-agnostic agent harness.**
 
-**L.E.N.A.** — Logical Execution & Navigation Assistant. She's a Claude Code skill that thinks like a principal engineer: picky about *how* work gets done, not just whether it gets done. Quick task? She handles it and gets out of the way. Actually a project in disguise? She breaks it apart and hands each piece to whoever's actually built for it.
+LENA runs any AI model — GPT-5.5, Claude, Gemini, or local Ollama — through a single LangGraph state machine. Approximately 70% of the core logic was ported from a Claude Code plugin, so the orchestration patterns are battle-tested. Swap the model; the graph stays the same.
 
 ---
 
-## What actually happens
+## Table of Contents
 
-Every request hits a gate:
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Environment Variables](#environment-variables)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Supported Models](#supported-models)
+- [Stack](#stack)
+- [Mega Man UI](#mega-man-ui)
+- [Development](#development)
+
+---
+
+## Architecture
+
+### LangGraph State Machine
+
+Every task flows through a `StateGraph` compiled from `lena/runtime/graph.py`:
 
 ```
-Single task + one domain + clear requirements
-  → Direct execution (no agents, no ceremony)
-
-Multiple steps OR multiple domains OR fuzzy requirements OR "build / refactor / fix the whole thing"
-  → Orchestrated mode (split → route → stitch)
+session_init
+    └── vector_recall
+            └── router_node
+                    ├── [orchestrate + parallel tasks] → branch_executor (×N, parallel fan-out)
+                    │                                         └── merge_node → synthesizer
+                    ├── [orchestrate, no tasks]        → bd_register → executor
+                    └── [direct / fallback]            → executor
+                                                               ├── [action == review] → generator → critic → gate ⟲
+                                                               └── [default]          → synthesizer
+                                                                                              └── consolidation_node → END
 ```
 
-### Direct work
+Parallel fan-out (up to 4 branches) uses LangGraph `Send` objects returned from the conditional edge function — each branch runs `branch_executor` independently and converges at `merge_node`.
 
-Simple paths don't need a parade. LENA handles them solo: fix the bug, write the helper, explain the file, generate tests. Fast, quiet, done.
+### Routing
 
-**Examples:** patch a known issue, draft a function, walk through code, generate tests.
+Routing is handled by `skills/lena/routing_score.py` — a **zero-LLM, deterministic heuristic scorer**. It scores a task across six categories (task shape, domain breadth, concreteness, risk, validation need, intent verbs) and produces:
 
-### When LENA brings in backup
+| Field | Meaning |
+|---|---|
+| `routing` | `direct`, `orchestrate`, or fallback path |
+| `confidence` | 0–100 percentage |
+| `domains` | matched domain tags (frontend, backend, database, …) |
+| `action` | `execute`, `execute_log`, `clarify_or_orchestrate`, or `force_orchestrate` |
 
-Bigger work gets decomposed deliberately — not dumped on one agent. Each chunk goes to whoever's actually built for it. Context passes forward so nobody's starting from scratch mid-chain.
+The threshold is configured in `lena.config.yaml` (`routing.threshold`, default `70`). If the scorer exits non-zero, times out, or returns unparseable JSON, the router falls back to a safe default and lets the executor proceed.
 
-Steps with hard dependencies run in order. Steps without — testing + documentation after implementation, security + code review on the same artifact — run concurrently.
+### ModelAdapter Protocol
 
----
+`lena/adapters/base.py` defines a `ModelAdapter` Protocol:
 
-## Who LENA can call
+```python
+class ModelAdapter(Protocol):
+    name: str
+    last_usage: dict[str, int]
 
-She groups work into categories, picks the right agents, and only pulls in the lanes the task actually needs. The runtime may not expose every type; LENA maps to what's available.
-
-| Category | What it's for | Agents (typical) |
-|----------|---------------|-------------------|
-| **Architecture** | System design, tradeoffs | `architect-reviewer` |
-| **Implementation** | Writing and changing code | `backend-developer`, `frontend-developer`, `fullstack-developer`, `refactoring-specialist` |
-| **Debugging** | Root cause analysis | `debugger`, `error-detective` |
-| **Code Review** | Quality and correctness | `code-reviewer` |
-| **Performance** | Optimization (incl. dev workflow / build loop) | `dx-optimizer` + database agents when the problem is queries |
-| **Testing** | Test generation | `test-automator` |
-| **Security** | Vulnerabilities, hardening, best practices | `code-reviewer` with an explicit security brief |
-| **Database** | Schema, queries, data layer | `database-administrator`, `database-optimizer`, `postgres-pro` |
-| **DevOps** | Deployment, infrastructure | `cloud-architect`, `kubernetes-specialist` |
-| **Documentation** | Explanations and docs | `documentation-engineer`, `technical-writer` |
-| **ML / AI** (when relevant) | LLM systems, RAG, tuning | `llm-architect` |
-
----
-
-## Adding custom agents for LENA to choose from
-
-LENA works great with VoltAgents subagents — honestly worth pairing them.
-
-Repo: [VoltAgent SubAgent Collection](https://github.com/VoltAgent/awesome-claude-code-subagents).
-
-### Cursor (`subagent_type` + `.cursor/agents`)
-
-**Where files live**
-
-| Scope | Path | Notes |
-|-------|------|--------|
-| **Project** | `.cursor/agents/*.md` | Current repo only; wins over user scope on name collision |
-| **User** | `~/.cursor/agents/*.md` | Available in every project |
-
-`subagent_type` goes in the **Tool / Agent call**, not the file. The string must match an agent Cursor actually registered.
-
-```markdown
----
-name: my-api-hardening
-description: Use for auth, input validation, and OWASP-style API reviews.
-model: inherit
-readonly: false
----
-
-Your system prompt for this specialist goes here.
+    def complete(
+        self,
+        messages: list[Message],
+        cache_breakpoints: list[int] | None = None,
+        model: str = "",
+        **kwargs,
+    ) -> str: ...
 ```
 
-The `description` is what the parent reads to decide whether to hand work off. Get that right.
+Concrete adapters (`anthropic.py`, `openai.py`, `gemini.py`, `ollama.py`) are selected at runtime by pattern-matching the model string against `lena.config.yaml`. Every adapter is wrapped in `MetricsAdapter` to track token usage.
 
-Docs: [Subagents (Cursor)](https://cursor.com/docs/agent/subagents).
+### 3-Layer Memory
 
-### Claude Code (`.claude/agents`)
+| Layer | Backend | Purpose |
+|---|---|---|
+| Working memory | mem0 OSS + pgvector | Per-session episodic recall (`vector_recall` node) |
+| Temporal knowledge graph | Zep OSS + Postgres | Long-term entity and fact timeline |
+| Team moat | pgvector (`lena_team_memory` table) | Shared organizational memory, 768-dim `nomic-embed-text` embeddings |
 
-**Where files live** (higher priority wins on name collision)
+### Event Bus
 
-| Scope | Path | Notes |
-|-------|------|--------|
-| **Managed / org** | Per your admin | Highest precedence |
-| **CLI (session only)** | `claude --agents '{ ... }'` | JSON map; same fields as frontmatter; not saved to disk |
-| **Project** | `.claude/agents/*.md` | Walks up from cwd; good to commit for the team |
-| **User** | `~/.claude/agents/*.md` | Personal agents in every project |
-| **Plugin** | Plugin's `agents/` | Lowest precedence; ships with plugins like LENA |
-
-`--add-dir` adds file access only — those extra roots are **not** scanned for agents.
-
-**Minimum frontmatter** (`name` and `description` required; body = system prompt)
-
-```markdown
----
-name: my-api-hardening
-description: Use for auth, input validation, and OWASP-style API reviews.
-tools: Read, Glob, Grep
----
-
-Your system prompt for this specialist goes here.
-```
-
-Optional keys: `tools`, `disallowedTools`, `model`, `permissionMode`, `skills`, `mcpServers`, `hooks`, `maxTurns`. Plugin-defined agents ignore `hooks`, `mcpServers`, and `permissionMode` — copy the file into `.claude/agents/` or `~/.claude/agents/` if you need those.
-
-**After editing:** restart the session or run `/agents` to reload.
-
-Docs: [Subagents (Claude Code)](https://docs.claude.com/en/docs/claude-code/subagents).
+`lena/events.py` exports a module-level `bus: LenaEventBus` — a thread-safe async pub/sub queue. Both UIs subscribe to it and render live updates. Events include `NODE_ENTER`, `NODE_EXIT`, `TASK_COMPLETE`, `TASK_ERROR`, `TOKEN_USAGE`, `ROUTING_DECISION`, and `FEEDBACK_LOOP`.
 
 ---
 
-## Tool infrastructure
+## Prerequisites
 
-Here's where it gets fun. LENA runs on four tools underneath — execution tracking, architecture graph queries, context management, and output compression. Each one has a fallback if it's not installed, so nothing breaks.
+- Python **3.11** or later
+- **Docker Compose** (runs Postgres/pgvector, Redis, Zep, Langfuse)
+- **Ollama** with `nomic-embed-text` pulled (used for embeddings by mem0 and the team moat)
+- An **OpenAI API key** (the only paid external dependency; required only when using `gpt-*`, `o1-*`, or `o3-*` models)
 
-### Beads — Execution tracking
+---
 
-Download [Beads](https://github.com/gastownhall/beads)
+## Installation
 
-Beads is one of my favorites in this stack. It's a Dolt-backed graph issue tracker — task state that actually survives context compaction. When LENA splits a job into steps, every step gets a ticket before anything runs. Title, role, priority, dependency edges — all locked in upfront.
+### 1. Clone and install
 
 ```bash
-bd init --quiet --stealth  # initialize at git root
-bd create "..." -t task    # register a task
-bd ready                   # claim next unblocked task
-bd update <id> --claim     # mark in-progress
-bd close <id>              # mark complete
-bd dep tree <id>           # show dependency graph
+git clone https://github.com/your-org/lena.git
+cd lena
+pip install -e .
 ```
 
-The thing I love about this: the hard rule is that no agent gets dispatched until every step is registered. LENA uses `bd ready` to find what's actually unblocked at each point, and `bd list --status open` to make sure nothing got silently dropped before wrapping up.
+### 2. Pull the embedding model
 
-`bd prime` runs on SessionStart and PreCompact via Claude hooks — LENA always wakes up knowing what's live.
+```bash
+ollama pull nomic-embed-text
+```
 
-**Fallback:** numbered checklist inline. Outputs noted as code blocks after each step.
+### 3. Set environment variables
+
+Copy the table in the [Environment Variables](#environment-variables) section into a `.env` file or your shell profile.
+
+### 4. Start infrastructure
+
+```bash
+docker compose up -d
+```
+
+This starts:
+- **Postgres 16 + pgvector** on `localhost:5432` (creates `lena`, `zep`, and `langfuse` databases automatically)
+- **Redis 7** on `localhost:6379`
+- **Zep** on `localhost:8000`
+- **Langfuse** (web + worker) on `localhost:3000`
+
+### 5. Run database migrations
+
+```bash
+psql postgresql://lena:$LENA_DB_PASSWORD@localhost:5432/lena \
+  -f lena/db/migrations/001_init.sql \
+  -f lena/db/migrations/002_team_moat_indexes.sql \
+  -f lena/db/migrations/003_hnsw_migration.sql
+```
 
 ---
 
-### Graphify — Architecture graph
+## Environment Variables
 
-Download [Graphify](https://github.com/safishamsi/graphify)
+All variables are required unless noted otherwise.
 
-Okay this one is genuinely impressive. Graphify takes any folder of files — code, docs, papers, notes, whatever you've got — and builds a persistent knowledge graph from it. Community detection, a real audit trail, queryable relationships.
+| Variable | Used by | Notes |
+|---|---|---|
+| `LENA_DB_PASSWORD` | Postgres, Zep, Langfuse | Password for the `lena` Postgres user |
+| `ZEP_AUTH_SECRET` | docker-compose (Zep container) | Secret used internally by the Zep service |
+| `ZEP_API_KEY` | `lena.config.yaml` (Zep client) | API key the LENA runtime uses to call Zep |
+| `LANGFUSE_NEXTAUTH_SECRET` | docker-compose (Langfuse web) | Required to boot the Langfuse container |
+| `LANGFUSE_SALT` | docker-compose (Langfuse web + worker) | Required to boot the Langfuse container |
+| `LANGFUSE_PUBLIC_KEY` | `lena.config.yaml` | Langfuse project public key |
+| `LANGFUSE_SECRET_KEY` | `lena.config.yaml` | Langfuse project secret key |
+| `OPENAI_API_KEY` | OpenAI SDK (standard env lookup) | Required only when using `gpt-*`, `o1-*`, or `o3-*` models |
 
-LENA uses it when she needs to understand architecture or trace impact: what calls what, how concepts connect, which nodes are the real hubs. The graph lives across sessions. A query takes seconds instead of re-reading the whole codebase from scratch.
-
-```bash
-graphify <path>                        # build the graph
-graphify query "<question>"            # BFS traversal — broad context
-graphify query "<question>" --dfs      # DFS — trace a specific path
-graphify path "AuthModule" "Database"  # shortest path between two concepts
-graphify explain "NodeName"            # plain-language neighborhood
-```
-
-Every edge gets tagged EXTRACTED, INFERRED, or AMBIGUOUS — so you know what was found versus what was guessed. It also exposes an MCP server (`--mcp`) so LENA can query the graph via tool calls when the server's configured. Key findings flow back into cross-session memory tagged `[graph:HEAD]`, so the next session doesn't have to re-query things we already know.
-
-**Fallback:** semantic search for meaning-based lookup when no graph exists.
-
----
-
-### Lean CTX — Context management
-
-Download [Lean CTX](https://github.com/yvgude/lean-ctx)
-
-Lean CTX keeps the context window from turning into a disaster zone. Before each sub-agent call, it compresses active context and injects a clean `## Context` block into the prompt — no raw conversation dumps, just the relevant state. It also handles `ctx_knowledge` and `ctx_session`: cross-session memory for project facts, architectural decisions, and session findings that survive compaction and carry forward automatically.
-
-**Fallback:** manual context summary (task goal, decisions so far, current step, blockers) injected into each sub-agent prompt. Cap at 500 tokens per call.
-
----
-
-### Caveman — Output compression
-
-Download [Caveman](https://github.com/JuliusBrussee/caveman)
-
-Caveman compresses LENA's output. Six levels — pick the intensity. LENA inherits whatever's already active and never overrides it.
-
-| Level | Behavior |
-|-------|----------|
-| `lite` | No filler or hedging. Articles and full sentences kept. Tight but readable |
-| `full` | Drop articles, fragments OK, short synonyms. Classic caveman |
-| `ultra` | Abbreviate (DB / auth / config / req / res / fn / impl), arrows for causality (X → Y), one word when one word works |
-| `wenyan-lite` | Semi-classical Chinese. Drop filler, keep grammar structure |
-| `wenyan-full` | Maximum classical terseness. 80–90% character reduction |
-| `wenyan-ultra` | Extreme abbreviation with classical Chinese feel |
-
-Not compressed: code blocks, error messages, security warnings, destructive action confirmations, multi-step sequences where order matters.
-
-**Fallback:** terse prose — drop filler, hedging, and pleasantries.
-
----
-
-### Tool availability check
-
-LENA checks what's actually installed at the start of any orchestrated run:
-
-| Tool | Available | Unavailable |
-|------|-----------|-------------|
-| Beads (`bd`) | Full execution graph, dependency tracking | Inline numbered checklist |
-| Graphify | Graph queries, architecture + impact analysis | Semantic search fallback |
-| Lean CTX | Compress per sub-agent call; cross-session memory | Manual 500-token context block |
-| Caveman | Compress all human-facing output | Terse prose manually |
-
----
-
-## Install
-
-### Claude Code (recommended)
-
-```bash
-claude plugin add justjammin/lena
-```
-
-This registers a SessionStart hook that loads the LENA skill into hidden context on every new session. Routing rules kick in from the first message until you say `stop lena`, `exit lena`, or `lena off`. `/lena` still works as an explicit trigger.
-
-### npx
-
-```bash
-npx lena-ai
-```
-
-### Manual
-
-```bash
-mkdir -p ~/.claude/skills/lena
-curl -o ~/.claude/skills/lena/SKILL.md \
-  https://raw.githubusercontent.com/justjammin/lena/main/skills/lena/SKILL.md
-```
-
-Manual install is skill only — no SessionStart hook. Use `/lena` each thread.
-
-### Uninstall
-
-```bash
-node uninstall.js
-```
-
-Removes the skill, hook scripts, and cleans LENA's entries from `~/.claude/settings.json`. Restart Claude Code after.
+Optional Langfuse bootstrap variables (`LANGFUSE_NEXTAUTH_URL`, `LANGFUSE_INIT_ORG_*`, `LANGFUSE_INIT_PROJECT_*`, `LANGFUSE_INIT_USER_*`) are accepted by docker-compose but not required for LENA to function.
 
 ---
 
 ## Usage
 
-**Plugin:** LENA is already primed when the session opens. `/lena` is optional.
-
-**Skill-only:** type `/lena`:
-
-```
-/lena
-```
-
-First `/lena` in a thread: **LENA active. What are we building?** After that, LENA routes every message until `stop lena`, `exit lena`, or `lena off`. With the plugin, the next session primes LENA again automatically via the hook.
-
-### Two quick examples
-
-**Small and clear** (LENA won't over-orchestrate):
-
-```
-/lena
-> Fix the N+1 query in the user dashboard
-
-→ LENA handles it directly
-```
-
-**Big and messy** (LENA lines up the right people):
-
-```
-/lena
-> Build a complete JWT auth system with refresh tokens, tests, and documentation
-
-→ Rough flow:
-  1. architect-reviewer ... system shape and contracts
-  2. backend-developer ... auth + refresh tokens
-  3. test-automator ... tests
-  4. documentation-engineer ... API docs
-```
-
----
-
-## Rules LENA lives by
-
-1. **Correct beats clever.** Always.
-2. **If it's vague, LENA asks once.** One sharp question. Not twenty.
-3. **No scope creep from LENA's side.** Build what was asked.
-4. **No half-finished proof of concept when you needed something real.**
-5. **LENA explains when it helps.** Not because the template said to.
-
----
-
-## Where it runs
-
-| Environment | Install |
-|-------------|---------|
-| Claude Code | `claude plugin add justjammin/lena && claude plugin install lena@lena` |
-| **Codex** | Clone repo → `/plugins` → Search "lena" → Install |
-| **Gemini CLI** | `gemini extensions install https://github.com/justjammin/lena` |
-| **Cursor** | `npx skills add justjammin/lena -a cursor` |
-| **Windsurf** | `npx skills add justjammin/lena -a windsurf` |
-| **Copilot** | `npx skills add justjammin/lena -a github-copilot` |
-| **Cline** | `npx skills add justjammin/lena -a cline` |
-| **Any other** | `npx skills add justjammin/lena` |
-
----
-
-
-<summary><strong>Any other agent (opencode, Roo, Amp, Goose, Kiro, and 40+ more)</strong></summary>
-
-[npx skills](https://github.com/vercel-labs/skills) supports 40+ agents:
+### CLI — run a task
 
 ```bash
-npx skills add justjammin/lena           # auto-detect agent
-npx skills add justjammin/lena -a amp
-npx skills add justjammin/lena -a augment
-npx skills add justjammin/lena -a goose
-npx skills add justjammin/lena -a kiro-cli
-npx skills add justjammin/lena -a roo
-# ... and many more
+lena run --task "Refactor the auth module to use JWT refresh tokens"
 ```
+
+Read from stdin:
+
+```bash
+echo "Explain the team moat schema" | lena run
+```
+
+Override the model for a single run:
+
+```bash
+# Free — local Ollama
+lena run --task "Review this PR" --model ollama/llama3
+
+# Paid — OpenAI
+lena run --task "Build a REST endpoint for user registration" --model gpt-5.5
+```
+
+Point to an alternate config file:
+
+```bash
+lena run --task "..." --config /path/to/custom.yaml
+```
+
+### TUI — Mega Man terminal UI
+
+```bash
+lena tui
+```
+
+Launches a Textual terminal app with NES-palette health bars, a live event log, and routing display. See [Mega Man UI](#mega-man-ui) for the full widget map.
+
+### Web UI — pixel-art browser dashboard
+
+```bash
+lena serve
+# Open http://localhost:8080
+```
+
+Custom host/port:
+
+```bash
+lena serve --host 0.0.0.0 --port 9090
+```
+
+The web UI connects to LENA over WebSocket (`/ws`) and renders the same event stream as the TUI.
+
+---
+
+## Configuration
+
+`lena.config.yaml` at the repository root controls all runtime behavior.
+
+```yaml
+models:
+  default: gpt-5.5      # used when --model is not passed
+  fast: claude-haiku-4-5
+  local: ollama/llama3
+
+adapters:
+  - pattern: "claude-*"
+    adapter: anthropic
+  - pattern: "gpt-*"
+    adapter: openai
+  - pattern: "o1-*"
+    adapter: openai
+  - pattern: "o3-*"
+    adapter: openai
+  - pattern: "gemini-*"
+    adapter: gemini
+  - pattern: "ollama/*"
+    adapter: ollama
+  - pattern: "llama*"
+    adapter: ollama
+  - pattern: "qwen*"
+    adapter: ollama
+
+routing:
+  scorer_path: skills/lena/routing_score.py
+  threshold: 70          # minimum confidence % for direct routing
+
+memory:
+  backend: mem0
+  mem0:
+    embedder:
+      provider: ollama
+      config:
+        model: nomic-embed-text
+        ollama_base_url: "http://localhost:11434"
+    vector_store:
+      provider: pgvector
+      config:
+        host: localhost
+        port: 5432
+        dbname: lena
+        user: lena
+        password: "${LENA_DB_PASSWORD}"
+        collection_name: mem0_memories
+        embedding_model_dims: 768
+  zep:
+    base_url: "http://localhost:8000"
+    api_key: "${ZEP_API_KEY}"
+
+observability:
+  langfuse:
+    host: "http://localhost:3000"
+    public_key: "${LANGFUSE_PUBLIC_KEY}"
+    secret_key: "${LANGFUSE_SECRET_KEY}"
+  otel_endpoint: "http://localhost:3000/api/public/otel"
+
+registry:
+  manifest_path: agents.manifest.yaml
+
+team_moat:
+  enabled: true
+  team_id: "default"
+  top_k: 5
+
+embeddings:
+  provider: ollama
+  model: nomic-embed-text
+  base_url: "http://localhost:11434"
+```
+
+Pattern matching in `adapters` uses Python `fnmatch`. The first matching pattern wins. To add a new model family, append an entry — no code changes needed.
+
+---
+
+## Supported Models
+
+| Model pattern | Adapter | Cost | Cache behavior |
+|---|---|---|---|
+| `gpt-*`, `o1-*`, `o3-*` | OpenAI | Paid | Automatic prefix caching (SDK reads `cached_tokens` from usage details) |
+| `claude-*` | Anthropic | Paid | Explicit `cache_breakpoints` passed to the API |
+| `gemini-*` | Gemini | Paid | `cachedContents` API |
+| `ollama/*`, `llama*`, `qwen*` | Ollama | Free (local) | No caching |
+
+The default model (`gpt-5.5`) is the only paid dependency for a standard run. Switch to `--model ollama/llama3` for a fully free local session.
+
+---
+
+## Stack
+
+All components self-host via Docker Compose. The only external paid service is the OpenAI API.
+
+| Component | Purpose | Local endpoint |
+|---|---|---|
+| LangGraph 0.2 | State machine / agent orchestration | — |
+| mem0 OSS | Working memory with pgvector backend | — |
+| Zep OSS | Temporal knowledge graph | `localhost:8000` |
+| pgvector (Postgres 16) | Team moat + mem0 vector store (768-dim) | `localhost:5432` |
+| Redis 7 | Langfuse internal queue | `localhost:6379` |
+| Langfuse 2 (self-hosted) | LLM observability and tracing | `localhost:3000` |
+| Ollama | Local inference + `nomic-embed-text` embeddings | `localhost:11434` |
+
+---
+
+## Mega Man UI
+
+Both UIs share the same NES-inspired color palette and widget semantics. The palette (`#000000` background, `#0080c8` blue, `#c82000` red, `#f8b800` yellow, `#00c8c8` cyan, `#00a800` green, `#f87858` orange) is applied identically in both the Textual CSS and the web stylesheet.
+
+### TUI (`lena tui`)
+
+Built with [Textual](https://textual.textualize.io/). Runs entirely in the terminal.
+
+| Widget | Maps to |
+|---|---|
+| **BOSS HP** bar | Task progress — drains to 0 on `TASK_COMPLETE` |
+| **WEAPON** bar | Displayed but not updated by the event stream in the TUI |
+| **LIFE** bar | Context window fill — drains as token usage rises (`TOKEN_USAGE` event) |
+| **E-TANKS** `[⬛⬛⬛]` | Retry budget — one block consumed per `TASK_ERROR` (max 3) |
+| **AGENT** label | Name of the currently executing graph node |
+| **ROUTE** display | Routing decision: path, suggested role, and confidence % |
+| **Event log** | Last 8 events, scrolling |
+
+### Web UI (`lena serve`)
+
+Built with FastAPI + WebSocket. The single-page app at `/` connects to `/ws` on load and auto-reconnects with exponential backoff (1 s initial, 30 s maximum).
+
+| Widget | Maps to |
+|---|---|
+| **BOSS HP** bar | Task progress — drains to 0 on `TASK_COMPLETE` |
+| **WEAPON** bar | Inverse of token usage (rises as context fills) |
+| **LIFE** bar | Context window remaining |
+| **E-TANKS** `[⬛⬛⬛]` | Retry budget — one block consumed per `TASK_ERROR` |
+| **AGENT** label | Name of the currently executing graph node |
+| **ROUTING** panel | Routing decision: path, suggested role, and confidence % |
+| **EVENT LOG** | Last 20 events with timestamps and color-coded rows |
+| **STAGE CLEAR** overlay | Full-screen flash on `TASK_COMPLETE` or `BD_CLOSE` |
+
+---
+
+## Development
+
+### Install with test dependencies
+
+```bash
+pip install -e ".[test]"
+```
+
+### Run tests
+
+```bash
+# All unit tests
+pytest
+
+# Exclude integration tests that require a live Postgres connection
+pytest -m "not integration"
+```
+
+Integration tests are marked with `@pytest.mark.integration`. The marker is declared in `pyproject.toml` under `[tool.pytest.ini_options]`.
+
+### Score the router locally
+
+The routing scorer can be called directly for debugging or threshold tuning:
+
+```bash
+python skills/lena/routing_score.py --task "Add JWT refresh tokens to the auth service" --verbose
+python skills/lena/routing_score.py --task "Deploy to production and run database migrations" --json
+```
+
+### Agent manifest
+
+`agents.manifest.yaml` maps domains to specialist agent definitions. Each entry specifies a name, tool list, and model. Most agents default to `gpt-5.5`; the `technical-writer` agent defaults to `ollama/llama3`.
+
+---
 
 ## License
 
-MIT. [justjammin](https://github.com/justjammin).
+See `LICENSE` for terms.

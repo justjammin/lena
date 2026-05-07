@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LENA — MEGA MAN MODE</title>
+<style>
+  /* ── Reset & base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:     #000000;
+    --blue:   #0080c8;
+    --red:    #c82000;
+    --yellow: #f8b800;
+    --white:  #f8f8f8;
+    --cyan:   #00c8c8;
+    --green:  #00a800;
+    --orange: #f87858;
+    --dark:   #181818;
+    --grid:   8px;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--white);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    letter-spacing: 1px;
+    image-rendering: pixelated;
+    min-height: 100vh;
+  }
+
+  /* ── Pixel border utility (box-shadow trick) ── */
+  .px-border {
+    box-shadow:
+      0 0 0 2px var(--blue),
+      0 0 0 4px var(--bg),
+      0 0 0 6px var(--blue);
+  }
+
+  /* ── Layout ── */
+  #app {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: calc(var(--grid) * 2);
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--grid) * 2);
+  }
+
+  /* ── Title ── */
+  #title {
+    text-align: center;
+    color: var(--blue);
+    font-size: 20px;
+    font-weight: bold;
+    letter-spacing: 4px;
+    padding: calc(var(--grid) * 2) 0;
+    text-shadow:
+      2px 0 0 var(--cyan),
+      -2px 0 0 var(--cyan);
+    animation: title-pulse 2s step-end infinite;
+  }
+
+  @keyframes title-pulse {
+    0%, 100% { color: var(--blue); text-shadow: 2px 0 0 var(--cyan), -2px 0 0 var(--cyan); }
+    50%       { color: var(--cyan); text-shadow: 2px 0 0 var(--blue), -2px 0 0 var(--blue); }
+  }
+
+  /* ── Sprite ── */
+  #sprite-row {
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    gap: calc(var(--grid) * 3);
+  }
+
+  .sprite {
+    font-size: 22px;
+    line-height: 1;
+    white-space: pre;
+    color: var(--blue);
+    animation: sprite-bob 0.5s step-end infinite alternate;
+  }
+
+  @keyframes sprite-bob {
+    from { transform: translateY(0); }
+    to   { transform: translateY(-4px); }
+  }
+
+  /* ── Connection status ── */
+  #conn-status {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 2px;
+  }
+  #conn-status.connected    { color: var(--green); }
+  #conn-status.disconnected { color: var(--red); animation: blink 0.8s step-end infinite; }
+  #conn-status.connecting   { color: var(--yellow); }
+
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── Main panels row ── */
+  #panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: calc(var(--grid) * 2);
+  }
+
+  /* ── Panel card ── */
+  .panel {
+    background: var(--dark);
+    padding: calc(var(--grid) * 1.5);
+    border: 2px solid var(--blue);
+    position: relative;
+  }
+
+  .panel::before {
+    content: attr(data-label);
+    position: absolute;
+    top: -10px;
+    left: 8px;
+    background: var(--bg);
+    color: var(--yellow);
+    font-size: 11px;
+    letter-spacing: 2px;
+    padding: 0 4px;
+  }
+
+  /* ── Health bars ── */
+  .bar-group {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--grid));
+    margin-top: calc(var(--grid));
+  }
+
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--grid));
+  }
+
+  .bar-label {
+    width: 80px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 14px;
+    background: #111;
+    border: 1px solid #333;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    width: 100%;
+    transition: width 0.3s steps(28);
+    position: relative;
+  }
+
+  /* Segmented pixel look — repeating gradient */
+  .bar-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent calc(100%/28 - 1px),
+      #00000088 calc(100%/28 - 1px),
+      #00000088 calc(100%/28)
+    );
+  }
+
+  .bar-boss   { background: var(--red); }
+  .bar-weapon { background: var(--yellow); }
+  .bar-life   { background: var(--cyan); }
+
+  .bar-val {
+    width: 50px;
+    text-align: right;
+    font-size: 11px;
+    color: #aaa;
+    flex-shrink: 0;
+  }
+
+  /* ── E-Tanks ── */
+  #etanks {
+    margin-top: calc(var(--grid));
+    font-size: 13px;
+    color: var(--green);
+    letter-spacing: 2px;
+  }
+
+  /* ── Current agent ── */
+  #current-agent {
+    margin-top: calc(var(--grid));
+    color: var(--orange);
+    font-size: 12px;
+    letter-spacing: 1px;
+  }
+
+  /* ── Routing panel ── */
+  #routing-display {
+    margin-top: calc(var(--grid));
+    color: var(--orange);
+    font-size: 12px;
+    letter-spacing: 1px;
+    min-height: 20px;
+    text-align: center;
+  }
+
+  /* ── Stage clear flash ── */
+  #stage-clear {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: var(--yellow);
+    color: var(--bg);
+    font-size: 36px;
+    font-weight: bold;
+    letter-spacing: 6px;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    animation: clear-flash 0.15s step-end;
+  }
+
+  @keyframes clear-flash {
+    0%   { background: var(--yellow); }
+    33%  { background: var(--white); }
+    66%  { background: var(--blue); color: var(--white); }
+    100% { background: var(--yellow); }
+  }
+
+  /* ── Event log ── */
+  #log-panel {
+    grid-column: 1 / -1;
+  }
+
+  #log-list {
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    padding: calc(var(--grid) / 2) 0;
+  }
+
+  #log-list li {
+    padding: 2px 4px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #111;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #log-list li:nth-child(odd)  { background: #0a0a0a; }
+  #log-list li.ev-enter        { color: var(--cyan); }
+  #log-list li.ev-exit         { color: #555; }
+  #log-list li.ev-complete     { color: var(--yellow); font-weight: bold; }
+  #log-list li.ev-error        { color: var(--red); }
+  #log-list li.ev-feedback     { color: var(--orange); }
+  #log-list li.ev-routing      { color: var(--blue); }
+  #log-list li.ev-spawn        { color: var(--green); }
+  #log-list li.ev-boot         { color: var(--white); }
+
+  /* ── Scrollbar pixel style ── */
+  #log-list::-webkit-scrollbar       { width: 8px; background: #111; }
+  #log-list::-webkit-scrollbar-thumb { background: var(--blue); }
+
+  /* ── Footer ── */
+  #footer {
+    text-align: center;
+    color: #333;
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: calc(var(--grid)) 0;
+  }
+</style>
+</head>
+<body>
+
+<div id="stage-clear">★ STAGE CLEAR ★</div>
+
+<div id="app">
+
+  <div id="title">★ L E N A — M E G A  M A N  M O D E ★</div>
+
+  <!-- Sprite row -->
+  <div id="sprite-row">
+    <div class="sprite" id="sprite-left">▐█▌
+▄█▄
+█ █</div>
+    <div id="conn-status" class="connecting">[ CONNECTING... ]</div>
+    <div class="sprite" id="sprite-right">▐█▌
+▄█▄
+█ █</div>
+  </div>
+
+  <div id="panels">
+
+    <!-- Left: bars -->
+    <div class="panel" data-label="STATUS">
+      <div class="bar-group">
+        <div class="bar-row">
+          <span class="bar-label" style="color:var(--red)">BOSS HP</span>
+          <div class="bar-track">
+            <div class="bar-fill bar-boss" id="bar-boss" style="width:100%"></div>
+          </div>
+          <span class="bar-val" id="val-boss">28/28</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label" style="color:var(--yellow)">WEAPON</span>
+          <div class="bar-track">
+            <div class="bar-fill bar-weapon" id="bar-weapon" style="width:100%"></div>
+          </div>
+          <span class="bar-val" id="val-weapon">28/28</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-label" style="color:var(--cyan)">LIFE</span>
+          <div class="bar-track">
+            <div class="bar-fill bar-life" id="bar-life" style="width:100%"></div>
+          </div>
+          <span class="bar-val" id="val-life">28/28</span>
+        </div>
+      </div>
+      <div id="etanks">E-TANKS [⬛⬛⬛]</div>
+      <div id="current-agent">AGENT: — READY —</div>
+    </div>
+
+    <!-- Right: routing -->
+    <div class="panel" data-label="ROUTING">
+      <div id="routing-display">AWAITING ORDERS...</div>
+    </div>
+
+    <!-- Full-width log -->
+    <div class="panel" id="log-panel" data-label="EVENT LOG">
+      <ul id="log-list"></ul>
+    </div>
+
+  </div>
+
+  <div id="footer">LENA v1 — INSERT COIN TO CONTINUE</div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  const MAX_LOG = 20;
+  const BAR_MAX = 28;
+
+  const state = {
+    boss:    BAR_MAX,
+    weapon:  BAR_MAX,
+    life:    BAR_MAX,
+    retries: 3,
+  };
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const connEl       = document.getElementById('conn-status');
+  const barBoss      = document.getElementById('bar-boss');
+  const barWeapon    = document.getElementById('bar-weapon');
+  const barLife      = document.getElementById('bar-life');
+  const valBoss      = document.getElementById('val-boss');
+  const valWeapon    = document.getElementById('val-weapon');
+  const valLife      = document.getElementById('val-life');
+  const etanksEl     = document.getElementById('etanks');
+  const agentEl      = document.getElementById('current-agent');
+  const routingEl    = document.getElementById('routing-display');
+  const logList      = document.getElementById('log-list');
+  const clearOverlay = document.getElementById('stage-clear');
+
+  // ── Bar helpers ────────────────────────────────────────────────────────────
+  function setBar(fillEl, valEl, val) {
+    const clamped = Math.max(0, Math.min(BAR_MAX, val));
+    fillEl.style.width = ((clamped / BAR_MAX) * 100).toFixed(1) + '%';
+    valEl.textContent = clamped + '/' + BAR_MAX;
+  }
+
+  function updateEtanks() {
+    const filled = '⬛'.repeat(state.retries);
+    const empty  = '⬜'.repeat(3 - state.retries);
+    etanksEl.textContent = 'E-TANKS [' + filled + empty + ']';
+  }
+
+  // ── Log helper ─────────────────────────────────────────────────────────────
+  function appendLog(msg, cssClass) {
+    const li = document.createElement('li');
+    li.textContent = '[' + new Date().toTimeString().slice(0, 8) + '] ' + msg;
+    if (cssClass) li.className = cssClass;
+    logList.appendChild(li);
+
+    // keep last MAX_LOG
+    while (logList.children.length > MAX_LOG) {
+      logList.removeChild(logList.firstChild);
+    }
+    logList.scrollTop = logList.scrollHeight;
+  }
+
+  // ── Stage clear flash ──────────────────────────────────────────────────────
+  function stageClearFlash() {
+    clearOverlay.style.display = 'flex';
+    setTimeout(() => { clearOverlay.style.display = 'none'; }, 1800);
+  }
+
+  // ── Event dispatch ─────────────────────────────────────────────────────────
+  function handleEvent(data) {
+    const { type, payload } = data;
+
+    switch (type) {
+      case 'node_enter': {
+        const node = payload.node || '?';
+        agentEl.textContent = 'AGENT: ' + node.toUpperCase();
+        appendLog('▶ ' + node, 'ev-enter');
+        break;
+      }
+      case 'node_exit': {
+        const node = payload.node || '?';
+        appendLog('✓ ' + node, 'ev-exit');
+        break;
+      }
+      case 'agent_spawn': {
+        const role = payload.role || '?';
+        appendLog('SPAWN → ' + role.toUpperCase(), 'ev-spawn');
+        break;
+      }
+      case 'task_complete': {
+        appendLog('★ STAGE CLEAR! ★', 'ev-complete');
+        state.boss = 0;
+        setBar(barBoss, valBoss, 0);
+        stageClearFlash();
+        break;
+      }
+      case 'bd_close': {
+        appendLog('♪ STAGE CLEAR FANFARE ♪', 'ev-complete');
+        stageClearFlash();
+        break;
+      }
+      case 'task_error': {
+        const err = (payload.error || '?').slice(0, 80);
+        state.retries = Math.max(0, state.retries - 1);
+        updateEtanks();
+        appendLog('✗ ERROR: ' + err, 'ev-error');
+        break;
+      }
+      case 'token_usage': {
+        const used  = payload.used  || 0;
+        const total = payload.total || 128000;
+        const pct   = total > 0 ? (used / total) : 0;
+        state.life = Math.round((1 - pct) * BAR_MAX);
+        setBar(barLife, valLife, state.life);
+        // Weapon bar: inverse of life (energy cost)
+        state.weapon = Math.round(pct * BAR_MAX);
+        setBar(barWeapon, valWeapon, BAR_MAX - state.weapon);
+        break;
+      }
+      case 'routing_decision': {
+        const routing = (payload.routing || '?').toUpperCase();
+        const role    = payload.role       || '?';
+        const conf    = payload.confidence || 0;
+        routingEl.textContent = 'ROUTE: ' + routing + ' → ' + role + ' (' + conf + '%)';
+        appendLog('ROUTE: ' + routing + ' → ' + role, 'ev-routing');
+        break;
+      }
+      case 'feedback_loop': {
+        const iter = payload.iteration || 0;
+        appendLog('↺ FEEDBACK LOOP ×' + iter, 'ev-feedback');
+        break;
+      }
+      case 'ping':
+        // keepalive, no UI update needed
+        break;
+      default:
+        appendLog('? ' + type, null);
+    }
+  }
+
+  // ── WebSocket with auto-reconnect ──────────────────────────────────────────
+  let ws = null;
+  let reconnectDelay = 1000;
+
+  function connect() {
+    connEl.className = 'connecting';
+    connEl.textContent = '[ CONNECTING... ]';
+
+    const url = 'ws://' + location.host + '/ws';
+    ws = new WebSocket(url);
+
+    ws.onopen = function () {
+      connEl.className = 'connected';
+      connEl.textContent = '[ CONNECTED ]';
+      reconnectDelay = 1000;
+      appendLog('LENA WS CONNECTED', 'ev-boot');
+    };
+
+    ws.onmessage = function (evt) {
+      let data;
+      try {
+        data = JSON.parse(evt.data);
+      } catch (_) {
+        return;
+      }
+      handleEvent(data);
+    };
+
+    ws.onclose = function () {
+      connEl.className = 'disconnected';
+      connEl.textContent = '[ DISCONNECTED — RETRYING... ]';
+      appendLog('WS DISCONNECTED — retry in ' + (reconnectDelay / 1000) + 's', 'ev-error');
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    };
+
+    ws.onerror = function () {
+      ws.close();
+    };
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+  appendLog('LENA BOOT — READY PLAYER ONE', 'ev-boot');
+  updateEtanks();
+  connect();
+}());
+</script>
+</body>
+</html>

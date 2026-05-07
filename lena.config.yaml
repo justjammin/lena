@@ -1,0 +1,68 @@
+models:
+  default: gpt-5.5
+  fast: claude-haiku-4-5
+  local: ollama/llama3
+
+adapters:
+  - pattern: "claude-*"
+    adapter: anthropic
+  - pattern: "gpt-*"
+    adapter: openai
+  - pattern: "o1-*"
+    adapter: openai
+  - pattern: "o3-*"
+    adapter: openai
+  - pattern: "gemini-*"
+    adapter: gemini
+  - pattern: "ollama/*"
+    adapter: ollama
+  - pattern: "llama*"
+    adapter: ollama
+  - pattern: "qwen*"
+    adapter: ollama
+
+routing:
+  scorer_path: skills/lena/routing_score.py
+  threshold: 70
+
+memory:
+  backend: mem0
+  mem0:
+    embedder:
+      provider: ollama
+      config:
+        model: nomic-embed-text
+        ollama_base_url: "http://localhost:11434"
+    vector_store:
+      provider: pgvector
+      config:
+        host: localhost
+        port: 5432
+        dbname: lena
+        user: lena
+        password: "${LENA_DB_PASSWORD}"
+        collection_name: mem0_memories
+        embedding_model_dims: 768
+  zep:
+    base_url: "http://localhost:8000"
+    api_key: "${ZEP_API_KEY}"
+
+observability:
+  langfuse:
+    host: "http://localhost:3000"
+    public_key: "${LANGFUSE_PUBLIC_KEY}"
+    secret_key: "${LANGFUSE_SECRET_KEY}"
+  otel_endpoint: "http://localhost:3000/api/public/otel"
+
+registry:
+  manifest_path: agents.manifest.yaml
+
+team_moat:
+  enabled: true
+  team_id: "default"
+  top_k: 5
+
+embeddings:
+  provider: ollama
+  model: nomic-embed-text
+  base_url: "http://localhost:11434"
