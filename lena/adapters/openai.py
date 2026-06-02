@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from .base import Message
+from .base import Completion, Message, ToolCall
 
 try:
     import openai as _openai_sdk
@@ -27,9 +28,12 @@ class OpenAIAdapter:
         messages: list[Message],
         cache_breakpoints: list[int] | None = None,
         model: str = "",
+        tools: list[dict] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> Completion:
         # cache_breakpoints are not applicable for the OpenAI API; ignored intentionally.
+        if tools:
+            kwargs["tools"] = tools
         response = self._client.chat.completions.create(
             model=model,
             messages=list(messages),  # type: ignore[arg-type]
@@ -46,4 +50,14 @@ class OpenAIAdapter:
             "output_tokens": usage.completion_tokens if usage else 0,
         }
 
-        return response.choices[0].message.content or ""
+        msg = response.choices[0].message
+        content = msg.content or ""
+        tool_calls: list[ToolCall] = []
+        for i, tc in enumerate(msg.tool_calls or []):
+            raw_args = getattr(tc.function, "arguments", None) or "{}"
+            tool_calls.append(ToolCall(
+                id=tc.id or f"call_{i}",
+                name=tc.function.name,
+                arguments=json.loads(raw_args),
+            ))
+        return Completion(content=content, tool_calls=tool_calls)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import Message
+from .base import Completion, Message, ToolCall
 
 try:
     import ollama as _ollama_sdk
@@ -26,16 +26,22 @@ class OllamaAdapter:
         messages: list[Message],
         cache_breakpoints: list[int] | None = None,
         model: str = "",
+        tools: list[dict] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> Completion:
         # cache_breakpoints are not applicable for Ollama; ignored intentionally.
         model_name = model.removeprefix("ollama/") if model.startswith("ollama/") else model
 
-        response = _ollama_sdk.chat(
-            model=model_name,
-            messages=list(messages),  # type: ignore[arg-type]
-            **kwargs,
-        )
+        chat_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": list(messages),  # type: ignore[arg-type]
+        }
+        if tools:
+            chat_kwargs["tools"] = tools  # Ollama accepts OpenAI-style tool schema natively.
+        # Forward any remaining kwargs (e.g. options, keep_alive) directly.
+        chat_kwargs.update(kwargs)
+
+        response = _ollama_sdk.chat(**chat_kwargs)
 
         # Ollama returns token counts in the response dict under prompt_eval_count / eval_count.
         self.last_usage = {
@@ -46,5 +52,26 @@ class OllamaAdapter:
         }
 
         if isinstance(response, dict):
-            return response.get("message", {}).get("content", "")
-        return response.message.content or ""
+            message = response.get("message", {})
+            content = message.get("content", "")
+            raw_tool_calls = message.get("tool_calls") or []
+        else:
+            content = response.message.content or ""
+            raw_tool_calls = getattr(response.message, "tool_calls", None) or []
+
+        tool_calls: list[ToolCall] = []
+        for i, tc in enumerate(raw_tool_calls):
+            if isinstance(tc, dict):
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                arguments = fn.get("arguments", {})
+                tc_id = tc.get("id") or f"call_{i}"
+            else:
+                fn = getattr(tc, "function", None) or {}
+                name = getattr(fn, "name", "") if not isinstance(fn, dict) else fn.get("name", "")
+                arguments = getattr(fn, "arguments", {}) if not isinstance(fn, dict) else fn.get("arguments", {})
+                tc_id = getattr(tc, "id", None) or f"call_{i}"
+            # Ollama arguments are already dicts (no json.loads needed).
+            tool_calls.append(ToolCall(id=tc_id, name=name, arguments=arguments if isinstance(arguments, dict) else {}))
+
+        return Completion(content=content, tool_calls=tool_calls)

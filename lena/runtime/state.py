@@ -44,3 +44,4 @@ class AgentState(TypedDict):
     # --- phase 3 additions ---
     vector_memories: list[dict]
     parallel_tasks: list[dict]
+    domain: str
