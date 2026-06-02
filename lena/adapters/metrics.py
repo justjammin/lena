@@ -6,7 +6,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
-from .base import Message, ModelAdapter
+from .base import Completion, Message, ModelAdapter
 
 _tracer = trace.get_tracer(__name__)
 
@@ -25,8 +25,9 @@ class MetricsAdapter:
         messages: list[Message],
         cache_breakpoints: list[int] | None = None,
         model: str = "",
+        tools: list[dict] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> Completion:
         span = _tracer.start_span("lena.adapter.complete")
         span.set_attribute("lena.adapter", self._inner.name)
         span.set_attribute("lena.model", model or "")
@@ -34,6 +35,7 @@ class MetricsAdapter:
             "lena.cache.breakpoints",
             str(cache_breakpoints) if cache_breakpoints else "none",
         )
+        span.set_attribute("lena.tools.count", len(tools) if tools else 0)
 
         t0 = time.perf_counter()
         try:
@@ -41,6 +43,7 @@ class MetricsAdapter:
                 messages,
                 cache_breakpoints=cache_breakpoints,
                 model=model,
+                tools=tools,
                 **kwargs,
             )
         except Exception as exc:

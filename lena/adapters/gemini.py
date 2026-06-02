@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any
 
-from .base import Message
+from .base import Completion, Message, ToolCall
 
 try:
     import google.genai as _genai
@@ -40,8 +40,9 @@ class GeminiAdapter:
         messages: list[Message],
         cache_breakpoints: list[int] | None = None,
         model: str = "",
+        tools: list[dict] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> Completion:
         self.last_cache_fallback = False
         cached_content_name: str | None = None
 
@@ -76,6 +77,21 @@ class GeminiAdapter:
             generate_config["system_instruction"] = "\n".join(
                 s if isinstance(s, str) else str(s) for s in system_msgs
             )
+        if tools:
+            # Translate OpenAI-style tool schema to Gemini FunctionDeclaration list.
+            function_declarations = [
+                {
+                    "name": t["function"]["name"],
+                    "description": t["function"].get("description", ""),
+                    "parameters": t["function"].get("parameters", {}),
+                }
+                for t in tools
+                if t.get("type") == "function"
+            ]
+            if function_declarations:
+                generate_config["tools"] = [
+                    _genai_types.Tool(function_declarations=function_declarations)
+                ]
 
         config_obj = _genai_types.GenerateContentConfig(**generate_config) if generate_config else None
 
@@ -93,7 +109,27 @@ class GeminiAdapter:
             "output_tokens": getattr(meta, "candidates_token_count", 0) or 0,
         }
 
-        return response.text or ""
+        try:
+            content_text = response.text or ""
+        except Exception:
+            content_text = ""
+
+        # Extract function calls from response parts.
+        tool_calls: list[ToolCall] = []
+        try:
+            parts = response.candidates[0].content.parts
+            for i, part in enumerate(parts):
+                fc = getattr(part, "function_call", None)
+                if fc is not None:
+                    tool_calls.append(ToolCall(
+                        id=f"call_{i}",
+                        name=fc.name,
+                        arguments=dict(fc.args),
+                    ))
+        except Exception:
+            pass
+
+        return Completion(content=content_text, tool_calls=tool_calls)
 
 
 def _hash_messages(messages: list[Message]) -> str:
@@ -106,19 +142,58 @@ def _hash_messages(messages: list[Message]) -> str:
 
 
 def _to_genai_contents(messages: list[Message]) -> list[dict]:
-    """Convert non-system Message list to google-genai Content format."""
+    """Convert non-system Message list to google-genai Content format.
+
+    Handles OpenAI-wire tool messages for multi-turn tool loops:
+    - assistant messages with tool_calls → model turn with function_call parts
+    - {role:"tool"} messages → user turn with function_response parts
+    """
     result = []
+    # Track call id → function name for function_response (Gemini needs the name, not the id).
+    id_to_name: dict[str, str] = {}
+
     for msg in messages:
         role = msg.get("role", "user")
-        # Gemini uses "model" for assistant, "user" for user
-        genai_role = "model" if role == "assistant" else "user"
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            parts = [{"text": content}]
+
+        if role == "assistant" and msg.get("tool_calls"):
+            # Build model turn with function_call parts.
+            parts: list[dict] = []
+            if msg.get("content"):
+                parts.append({"text": msg["content"]})
+            for tc in msg["tool_calls"]:
+                # tc is OpenAI wire: {"id","type":"function","function":{"name","arguments"}}
+                fn = tc.get("function", {})
+                fn_name = fn.get("name", "")
+                raw_args = fn.get("arguments", "{}")
+                parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                id_to_name[tc["id"]] = fn_name
+                parts.append({"function_call": {"name": fn_name, "args": parsed_args}})
+            result.append({"role": "model", "parts": parts})
+
+        elif role == "tool":
+            # Tool result: becomes a user turn with function_response part.
+            call_id = msg.get("tool_call_id", "")
+            fn_name = id_to_name.get(call_id, call_id)  # fall back to id if name unknown
+            result.append({
+                "role": "user",
+                "parts": [{
+                    "function_response": {
+                        "name": fn_name,
+                        "response": {"result": msg.get("content", "")},
+                    }
+                }],
+            })
+
         else:
-            parts = [
-                {"text": block.get("text", "")} if block.get("type") == "text" else block
-                for block in content
-            ]
-        result.append({"role": genai_role, "parts": parts})
+            genai_role = "model" if role == "assistant" else "user"
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                parts = [{"text": content}]
+            else:
+                parts = [
+                    {"text": block.get("text", "")} if block.get("type") == "text" else block
+                    for block in content
+                ]
+            result.append({"role": genai_role, "parts": parts})
+
     return result

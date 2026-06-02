@@ -5,6 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lena.adapters.base import Completion as _Completion
+
+
+def _c(text: str) -> _Completion:
+    """Shorthand: make a text-only Completion."""
+    return _Completion(content=text, tool_calls=[])
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -129,12 +136,13 @@ class TestBranchExecutor:
         from lena.runtime.nodes.parallel import branch_executor
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "branch output here"
+        mock_adapter.complete.return_value = _c("branch output here")
 
         state = _base_state(branch_id="branch-1", task="do the backend task")
 
         with patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter):
-            result = branch_executor(state)
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                result = branch_executor(state)
 
         assert "branch_results" in result
         assert "branch-1" in result["branch_results"]
@@ -144,12 +152,13 @@ class TestBranchExecutor:
         from lena.runtime.nodes.parallel import branch_executor
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "output"
+        mock_adapter.complete.return_value = _c("output")
 
         state = _base_state(branch_id="branch-2", model="gpt-5.5")
 
         with patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter):
-            result = branch_executor(state)
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                result = branch_executor(state)
 
         assert result["branch_results"]["branch-2"]["model"] == "gpt-5.5"
 
@@ -162,11 +171,12 @@ class TestBranchExecutor:
         state = _base_state(branch_id="branch-err")
 
         with patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter):
-            result = branch_executor(state)
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                result = branch_executor(state)
 
         # Should not raise — error message stored in output
         assert "branch-err" in result["branch_results"]
-        assert "branch_executor error" in result["branch_results"]["branch-err"]["output"]
+        assert "executor error" in result["branch_results"]["branch-err"]["output"]
 
     def test_branch_executor_never_writes_hat_file(self, tmp_path, monkeypatch):
         """Confirm no .lena-hat file is created during branch execution."""
@@ -176,12 +186,13 @@ class TestBranchExecutor:
         monkeypatch.chdir(tmp_path)
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "output"
+        mock_adapter.complete.return_value = _c("output")
 
         state = _base_state(branch_id="branch-hat-check", hat="backend-developer")
 
         with patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter):
-            branch_executor(state)
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                branch_executor(state)
 
         hat_files = list(tmp_path.glob(".lena-hat*"))
         assert hat_files == [], f"Unexpected hat file(s) written: {hat_files}"
@@ -190,12 +201,13 @@ class TestBranchExecutor:
         from lena.runtime.nodes.parallel import branch_executor
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "output"
+        mock_adapter.complete.return_value = _c("output")
 
         state = _base_state(branch_id=None)
 
         with patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter):
-            result = branch_executor(state)
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                result = branch_executor(state)
 
         assert "default" in result["branch_results"]
 
@@ -334,14 +346,15 @@ class TestOrchestrateEndToEnd:
 
         # Step 2: each branch executes and writes to branch_results
         mock_adapter = MagicMock()
-        mock_adapter.complete.side_effect = ["auth service implemented", "auth tests written"]
+        mock_adapter.complete.side_effect = [_c("auth service implemented"), _c("auth tests written")]
 
         all_branch_results: dict = {}
         with patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter):
-            for send_obj in sends:
-                branch_state = {**state, **send_obj.arg}
-                branch_out = branch_executor(branch_state)
-                all_branch_results.update(branch_out["branch_results"])
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                for send_obj in sends:
+                    branch_state = {**state, **send_obj.arg}
+                    branch_out = branch_executor(branch_state)
+                    all_branch_results.update(branch_out["branch_results"])
 
         assert "backend-abc" in all_branch_results
         assert "testing-def" in all_branch_results

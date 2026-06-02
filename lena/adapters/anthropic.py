@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
-from .base import Message
+from .base import Completion, Message, ToolCall
 
 try:
     import anthropic as _anthropic_sdk
@@ -28,8 +29,9 @@ class AnthropicAdapter:
         messages: list[Message],
         cache_breakpoints: list[int] | None = None,
         model: str = "",
+        tools: list[dict] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> Completion:
         if cache_breakpoints is not None and len(cache_breakpoints) > 4:
             raise ValueError(
                 f"Anthropic supports at most 4 cache breakpoints; got {len(cache_breakpoints)}"
@@ -47,7 +49,37 @@ class AnthropicAdapter:
                 else:
                     system_blocks.extend(content)
             else:
-                conversation.append(msg)
+                # Translate OpenAI-wire tool messages to Anthropic format.
+                role = msg.get("role")
+                if role == "assistant" and msg.get("tool_calls"):
+                    # Assistant turn with tool calls: build content blocks.
+                    anthropic_content: list[dict] = []
+                    if msg.get("content"):
+                        anthropic_content.append({"type": "text", "text": msg["content"]})
+                    for tc in msg["tool_calls"]:
+                        # tc is OpenAI wire: {"id","type":"function","function":{"name","arguments"}}
+                        fn = tc.get("function", {})
+                        raw_args = fn.get("arguments", "{}")
+                        parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                        anthropic_content.append({
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": fn.get("name", ""),
+                            "input": parsed_args,
+                        })
+                    conversation.append({"role": "assistant", "content": anthropic_content})
+                elif role == "tool":
+                    # Tool result: becomes a user turn in Anthropic format.
+                    conversation.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": msg.get("tool_call_id", ""),
+                            "content": msg.get("content", ""),
+                        }],
+                    })
+                else:
+                    conversation.append(msg)
 
         create_kwargs: dict[str, Any] = {
             "model": model,
@@ -57,6 +89,17 @@ class AnthropicAdapter:
         }
         if system_blocks:
             create_kwargs["system"] = system_blocks
+        if tools:
+            # Translate OpenAI-style tool schema to Anthropic format.
+            create_kwargs["tools"] = [
+                {
+                    "name": t["function"]["name"],
+                    "description": t["function"].get("description", ""),
+                    "input_schema": t["function"].get("parameters", {}),
+                }
+                for t in tools
+                if t.get("type") == "function"
+            ]
 
         response = self._client.messages.create(**create_kwargs)
 
@@ -68,7 +111,13 @@ class AnthropicAdapter:
             "output_tokens": usage.output_tokens,
         }
 
-        return "".join(b.text for b in response.content if b.type == "text")
+        content_text = "".join(b.text for b in response.content if b.type == "text")
+        tool_calls: list[ToolCall] = [
+            ToolCall(id=b.id, name=b.name, arguments=b.input)
+            for b in response.content
+            if b.type == "tool_use"
+        ]
+        return Completion(content=content_text, tool_calls=tool_calls)
 
 
 def _apply_cache_breakpoints(

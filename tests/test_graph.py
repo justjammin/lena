@@ -6,6 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from lena.adapters.base import Completion as _Completion
+
+
+def _c(text: str) -> _Completion:
+    """Shorthand: text-only Completion."""
+    return _Completion(content=text, tool_calls=[])
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -202,11 +209,14 @@ class TestExecutorNode:
             {"role": "user", "content": "Write hello world"},
         ]
 
+        from lena.adapters.base import Completion
+
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "print('hello world')"
+        mock_adapter.complete.return_value = Completion(content="print('hello world')", tool_calls=[])
 
         with patch("lena.runtime.nodes.executor.get_adapter", return_value=mock_adapter):
-            result = executor(state)
+            with patch("lena.runtime.nodes.executor._get_registry", return_value=None):
+                result = executor(state)
 
         assert result["upstream_context"] == "print('hello world')"
         # executor no longer sets needs_feedback — routing decision belongs to graph edges
@@ -295,7 +305,7 @@ class TestGraphDirectPath:
         graph, _ = self._build_graph_with_mocks()
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "PASS — looks good"
+        mock_adapter.complete.return_value = _c("PASS — looks good")
 
         state = _base_state(routing="direct")
 
@@ -305,6 +315,7 @@ class TestGraphDirectPath:
             patch("lena.runtime.nodes.session_init.load_config") as m_cfg,
             patch("lena.runtime.nodes.router_node.RouterNode") as m_router_cls,
             patch("lena.runtime.nodes.executor.get_adapter", return_value=mock_adapter),
+            patch("lena.runtime.nodes.executor._get_registry", return_value=None),
             patch("lena.runtime.nodes.feedback.get_adapter", return_value=mock_adapter),
             patch("lena.runtime.nodes.synthesizer._get_mem0") as s_mem0,
             patch("lena.runtime.nodes.synthesizer._get_zep") as s_zep,
@@ -350,7 +361,7 @@ class TestGraphDirectPath:
         graph, _ = self._build_graph_with_mocks()
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "PASS — looks good"
+        mock_adapter.complete.return_value = _c("PASS — looks good")
 
         state = _base_state(routing="orchestrate")
         state["routing_result"] = {
@@ -364,6 +375,7 @@ class TestGraphDirectPath:
             patch("lena.runtime.nodes.session_init.load_config") as m_cfg,
             patch("lena.runtime.nodes.router_node.RouterNode") as m_router_cls,
             patch("lena.runtime.nodes.executor.get_adapter", return_value=mock_adapter),
+            patch("lena.runtime.nodes.executor._get_registry", return_value=None),
             patch("lena.runtime.nodes.feedback.get_adapter", return_value=mock_adapter),
             patch("lena.runtime.nodes.synthesizer._get_mem0") as s_mem0,
             patch("lena.runtime.nodes.synthesizer._get_zep") as s_zep,
@@ -412,7 +424,7 @@ class TestGraphDirectPath:
         graph, _ = self._build_graph_with_mocks()
 
         mock_adapter = MagicMock()
-        mock_adapter.complete.return_value = "branch output"
+        mock_adapter.complete.return_value = _c("branch output")
 
         state = _base_state(routing="orchestrate")
         state["parallel_tasks"] = [
@@ -426,6 +438,7 @@ class TestGraphDirectPath:
             patch("lena.runtime.nodes.session_init.load_config") as m_cfg,
             patch("lena.runtime.nodes.router_node.RouterNode") as m_router_cls,
             patch("lena.runtime.nodes.parallel.get_adapter", return_value=mock_adapter),
+            patch("lena.runtime.nodes.executor._get_registry", return_value=None),
             patch("lena.runtime.nodes.synthesizer._get_mem0") as s_mem0,
             patch("lena.runtime.nodes.synthesizer._get_zep") as s_zep,
             patch("lena.runtime.nodes.vector_recall._get_vector_adapter", return_value=None),
@@ -477,7 +490,7 @@ class TestGraphDirectPath:
 
         mock_adapter = MagicMock()
         # Every adapter call returns FAIL so the loop exercises all iterations.
-        mock_adapter.complete.return_value = "FAIL — needs improvement"
+        mock_adapter.complete.return_value = _c("FAIL — needs improvement")
 
         state = _base_state(routing="direct")
         # Force the feedback path: action="review" causes router_node to set
@@ -490,6 +503,7 @@ class TestGraphDirectPath:
             patch("lena.runtime.nodes.session_init.load_config") as m_cfg,
             patch("lena.runtime.nodes.router_node.RouterNode") as m_router_cls,
             patch("lena.runtime.nodes.executor.get_adapter", return_value=mock_adapter),
+            patch("lena.runtime.nodes.executor._get_registry", return_value=None),
             patch("lena.runtime.nodes.feedback.get_adapter", return_value=mock_adapter),
             patch("lena.runtime.nodes.synthesizer._get_mem0") as s_mem0,
             patch("lena.runtime.nodes.synthesizer._get_zep") as s_zep,

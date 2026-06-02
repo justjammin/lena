@@ -26,7 +26,7 @@ def generator(state: AgentState) -> dict:
     ]
 
     try:
-        output = adapter.complete(messages, model=model)
+        output = adapter.complete(messages, model=model).content
     except Exception as exc:
         _log.error("feedback.generator failed: %s", exc)
         output = f"[generator error: {exc}]"
@@ -56,7 +56,7 @@ def critic(state: AgentState) -> dict:
     ]
 
     try:
-        verdict = adapter.complete(messages, model=model)
+        verdict = adapter.complete(messages, model=model).content
     except Exception as exc:
         _log.error("feedback.critic failed: %s", exc)
         verdict = "PASS"  # fail open — don't loop on adapter error
